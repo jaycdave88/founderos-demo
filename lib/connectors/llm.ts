@@ -9,6 +9,7 @@
  */
 import { z } from 'zod';
 import { CRED_FILES, resolveCred } from '@/lib/creds';
+import { colibriStatus, createColibriProvider } from '@/lib/connectors/colibri';
 import type { ConnectorStatus } from '@/lib/connectors/types';
 
 export type LlmRole = 'system' | 'user' | 'assistant' | 'tool';
@@ -118,6 +119,7 @@ export function createGatewayProvider(model: string = DEFAULT_MODEL): LlmProvide
 export function getLlmProvider(): LlmProvider {
   const name = process.env.LLM_PROVIDER ?? 'gateway';
   if (name === 'stub') return stubLlmProvider;
+  if (name === 'colibri') return createColibriProvider();
   return createGatewayProvider();
 }
 
@@ -129,6 +131,12 @@ export async function llmStatus(): Promise<ConnectorStatus> {
   const base = { id: 'llm', name: 'LLM (Gateway)', kind: 'orchestration' } as const;
   if (process.env.LLM_PROVIDER === 'stub') {
     return { ...base, state: 'connected', detail: 'stub provider active (tests)' };
+  }
+  if (process.env.LLM_PROVIDER === 'colibri') {
+    // Report against the endpoint actually in use, so the dashboard cannot show
+    // a green "gateway" while chat is really routed at a local Colibri.
+    const status = await colibriStatus();
+    return { ...base, name: 'LLM (Colibri)', state: status.state, detail: status.detail, meta: status.meta };
   }
   const key = resolveGatewayKey();
   if (!key) {

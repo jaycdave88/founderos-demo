@@ -14,6 +14,9 @@ import { whatsappStatus } from '@/lib/connectors/whatsapp';
 import { obsidianStatus } from '@/lib/connectors/obsidian';
 import { localStackStatus } from '@/lib/connectors/local-stack';
 import { llmStatus } from '@/lib/connectors/llm';
+import { colibriStatus } from '@/lib/connectors/colibri';
+import { paperclipStatus } from '@/lib/connectors/paperclip';
+import { crmStatus } from '@/lib/connectors/crm';
 import { webinarjamStatus } from '@/lib/connectors/webinarjam';
 import { trakyoStatus } from '@/lib/connectors/trakyo';
 import { metaAdsStatus } from '@/lib/connectors/meta-ads';
@@ -37,6 +40,10 @@ async function brainConnectorStatus(): Promise<ConnectorStatus> {
 const CHECKS: [string, ConnectorStatus['kind'], () => Promise<ConnectorStatus>][] = [
   ['gbrain', 'brain', brainConnectorStatus],
   ['llm', 'orchestration', llmStatus],
+  // Personal AI Stack: local inference, workforce control plane, system of record.
+  ['colibri', 'orchestration', colibriStatus],
+  ['paperclip', 'orchestration', paperclipStatus],
+  ['crm', 'crm', crmStatus],
   ['whatsapp', 'social', whatsappStatus],
   ['zernio', 'social', zernioStatus],
   ['beehiiv', 'social', () => beehiivStatus(runtimeEnv())],

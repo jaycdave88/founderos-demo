@@ -8,6 +8,7 @@ import { ConductorCard } from '@/components/ConductorCard';
 import { SparkIcon } from '@/components/SparkIcon';
 import { PageHeader } from '@/components/PageHeader';
 import type { Agent, AgentStatus } from '@/lib/schemas';
+import { operatorName, operatorTitle } from '@/lib/operator';
 
 export const dynamic = 'force-dynamic';
 
@@ -172,8 +173,8 @@ export default function OrgChartPage({ searchParams }: { searchParams?: { ventur
       {/* Operator */}
       <div className="flex flex-col items-center">
         <Users className="h-7 w-7 text-os-text" />
-        <div className="mt-1 text-base font-bold tracking-wide">Alex Rivera</div>
-        <div className="text-[10px] uppercase tracking-[0.3em] text-os-dim">Operator</div>
+        <div className="mt-1 text-base font-bold tracking-wide">{operatorName()}</div>
+        <div className="text-[10px] uppercase tracking-[0.3em] text-os-dim">{operatorTitle()}</div>
         <div className="mt-2 h-6 w-px bg-os-border-bright" />
         <div className="text-[10px] uppercase tracking-[0.2em] text-os-muted">Conductor (Super Agent)</div>
         <div className="h-3 w-px bg-os-border-bright" />

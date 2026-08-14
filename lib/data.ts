@@ -10,6 +10,20 @@ import { seedDatabase } from '@/lib/seed';
  */
 let instance: FounderDb | null = null;
 
+/**
+ * Set FOUNDER_OS_SEED=0 to run against real data only.
+ *
+ * The demo seed is what makes a fresh clone boot looking alive, and that is
+ * worth keeping — but it makes the database impossible to empty. Clearing rows
+ * satisfies the back-fill condition below, so the next page load restores all
+ * of it, including the tables the operator deliberately kept. An operator who
+ * has wired real sources needs a way off that treadmill, and deleting the seed
+ * is not it: they still want it for the next clone.
+ */
+function seedingEnabled(): boolean {
+  return (process.env.FOUNDER_OS_SEED ?? '1') !== '0';
+}
+
 export function getDb(): FounderDb {
   if (instance) return instance;
   const dbPath = process.env.FOUNDER_OS_DB ?? path.join(process.cwd(), 'data', 'founder-os.db');
@@ -19,13 +33,14 @@ export function getDb(): FounderDb {
   // back-fills databases created before that table existed; seedDatabase is
   // idempotent (INSERT OR REPLACE), so re-running only adds what's missing.
   if (
-    instance.departments.all().length === 0 ||
-    instance.workflows.all().length === 0 ||
-    instance.skills.all().length === 0 ||
-    instance.social.accounts().length === 0 ||
-    instance.emailList.snapshots().length === 0 ||
-    instance.social.dmSnapshots().length === 0 ||
-    instance.social.dmMessages().length === 0
+    seedingEnabled() &&
+    (instance.departments.all().length === 0 ||
+      instance.workflows.all().length === 0 ||
+      instance.skills.all().length === 0 ||
+      instance.social.accounts().length === 0 ||
+      instance.emailList.snapshots().length === 0 ||
+      instance.social.dmSnapshots().length === 0 ||
+      instance.social.dmMessages().length === 0)
   ) {
     seedDatabase(instance);
   }

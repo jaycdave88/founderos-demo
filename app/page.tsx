@@ -16,6 +16,7 @@ import { HomeSocialGraph } from '@/components/HomeSocialGraph';
 import { Badge, Dot, Kbd, Label, SectionHead, Spark } from '@/components/terminal';
 import { runsPerDay, inboundPerDay, stateOfWorld, type Tone } from '@/lib/pulse-history';
 import type { ConnectorStatus } from '@/lib/connectors/types';
+import { operatorFirstName } from '@/lib/operator';
 
 export const dynamic = 'force-dynamic';
 
@@ -192,7 +193,7 @@ export default async function HomePage() {
 
       <PageHeader
         eyebrow="operator console"
-        title={`${greeting()}, Alex`}
+        title={`${greeting()}, ${operatorFirstName()}`}
         caret
         right={<Kbd>⌘K</Kbd>}
       />

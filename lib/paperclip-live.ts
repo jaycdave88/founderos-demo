@@ -1,9 +1,10 @@
 /**
- * Live read of the Paperclip company — installed by personal-ai-stack
- * (scripts/65-founderos-paperclip.sh). Regenerated on every run; edit the
- * installer, not this file.
+ * Live read of the Paperclip company. Paperclip owns the issues; FounderOS
+ * renders them and can nudge them.
  *
- * Read-only. Paperclip owns the issues; FounderOS renders them.
+ * Tracked code in this repo — an earlier version of this file was written into
+ * the clone by a personal-ai-stack installer, which froze the fork on one pin
+ * and broke its smoke suites. Edit it here.
  */
 
 export type PaperclipAgent = {
@@ -16,6 +17,27 @@ export type PaperclipAgent = {
   adapterConfig?: { model?: string; provider?: string; maxTurnsPerRun?: number };
   lastHeartbeatAt?: string | null;
 };
+
+/**
+ * Paperclip's issue statuses, in board order — left to right is the path work
+ * actually takes. Membership matches Paperclip's own ISSUE_STATUSES exactly;
+ * only the order differs, so this is safe to validate against.
+ */
+export const ISSUE_STATUSES = [
+  'backlog',
+  'todo',
+  'in_progress',
+  'in_review',
+  'done',
+  'blocked',
+  'cancelled',
+] as const;
+
+export type IssueStatus = (typeof ISSUE_STATUSES)[number];
+
+export function isIssueStatus(value: string): value is IssueStatus {
+  return (ISSUE_STATUSES as readonly string[]).includes(value);
+}
 
 export type PaperclipIssue = {
   id: string;
@@ -222,19 +244,22 @@ export async function getPaperclipSnapshot(): Promise<PaperclipSnapshot> {
 
 export type WriteResult = { ok: boolean; detail: string };
 
-async function post(path: string, payload: unknown): Promise<WriteResult> {
+async function send(method: 'POST' | 'PATCH', path: string, payload: unknown): Promise<WriteResult> {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   const key = process.env.PAPERCLIP_API_KEY ?? '';
   if (key) headers.authorization = `Bearer ${key}`;
   try {
     const res = await fetch(`${base()}${path}`, {
-      method: 'POST',
+      method,
       headers,
       body: JSON.stringify(payload),
       cache: 'no-store',
       signal: AbortSignal.timeout(15000),
     });
     if (!res.ok) {
+      // Paperclip's rejection text is the useful half — it names the field it
+      // refused. Swallowing it for a tidy "failed" is how a wrong payload turns
+      // into a debugging session.
       const text = (await res.text()).slice(0, 300);
       return { ok: false, detail: `HTTP ${res.status}${text ? ` — ${text}` : ''}` };
     }
@@ -243,6 +268,8 @@ async function post(path: string, payload: unknown): Promise<WriteResult> {
     return { ok: false, detail: err instanceof Error ? err.message : 'request failed' };
   }
 }
+
+const post = (path: string, payload: unknown) => send('POST', path, payload);
 
 export async function createIssue(input: {
   title: string;
@@ -262,6 +289,26 @@ export async function createIssue(input: {
 export async function addComment(issueId: string, body: string): Promise<WriteResult> {
   if (!body.trim()) return { ok: false, detail: 'comment body is required' };
   return post(`/api/issues/${issueId}/comments`, { body });
+}
+
+/**
+ * Move an issue to another status.
+ *
+ * `PATCH /api/issues/{id}` takes every issue field partially, so sending
+ * `status` alone leaves title, assignee and parent untouched — checked against
+ * Paperclip's own `updateIssueSchema` rather than inferred from the route name.
+ *
+ * The schema also carries a `reopen` flag, and whether a move out of done or
+ * cancelled needs it is not established. It is deliberately not sent: an
+ * unverified flag that might wake an agent is worse than a rejection whose text
+ * this returns verbatim.
+ */
+export async function setIssueStatus(issueId: string, status: string): Promise<WriteResult> {
+  if (!issueId.trim()) return { ok: false, detail: 'issueId is required' };
+  if (!isIssueStatus(status)) {
+    return { ok: false, detail: `unknown status "${status}" — Paperclip takes ${ISSUE_STATUSES.join(', ')}` };
+  }
+  return send('PATCH', `/api/issues/${issueId}`, { status });
 }
 
 /**

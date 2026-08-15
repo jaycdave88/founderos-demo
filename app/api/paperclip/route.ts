@@ -1,6 +1,6 @@
 /**
  * GET /api/paperclip — live company, roster and work from Paperclip.
- * Installed by personal-ai-stack (scripts/65-founderos-paperclip.sh).
+ * POST /api/paperclip — the write half, behind an `action` discriminator.
  *
  * force-dynamic matters: without it Next prerenders this at build time, which
  * means `npm run build` would try to reach Paperclip and fail the build on any
@@ -11,6 +11,7 @@ import {
   addComment,
   createIssue,
   getPaperclipSnapshot,
+  setIssueStatus,
   wakeAgent,
 } from '@/lib/paperclip-live';
 
@@ -62,6 +63,9 @@ export async function POST(request: Request) {
       break;
     case 'comment':
       result = await addComment(field(payload, 'issueId'), field(payload, 'body'));
+      break;
+    case 'set_status':
+      result = await setIssueStatus(field(payload, 'issueId'), field(payload, 'status'));
       break;
     case 'wake':
       result = await wakeAgent(field(payload, 'agentId'));

@@ -178,6 +178,55 @@ function toIssue(raw: unknown): PaperclipIssue | null {
   };
 }
 
+/** A node in Paperclip's reporting tree. `reports` is the agents under it. */
+export type OrgNode = {
+  id: string;
+  name: string;
+  role: string;
+  status: string;
+  reports: OrgNode[];
+};
+
+/**
+ * Depth cap. Paperclip builds the tree from parent pointers, and a cycle there
+ * would otherwise recurse until the stack goes — a hierarchy this deep is a bug
+ * worth truncating rather than a company worth drawing.
+ */
+const MAX_ORG_DEPTH = 12;
+
+function toOrgNode(raw: unknown, depth = 0): OrgNode | null {
+  if (!raw || typeof raw !== 'object' || depth > MAX_ORG_DEPTH) return null;
+  const o = raw as Record<string, unknown>;
+  const id = str(o.id);
+  if (!id) return null;
+  return {
+    id,
+    name: str(o.name) ?? id,
+    role: str(o.role) ?? 'unknown',
+    status: str(o.status) ?? 'unknown',
+    reports: asArray(o.reports)
+      .map((child) => toOrgNode(child, depth + 1))
+      .filter((n): n is OrgNode => n !== null),
+  };
+}
+
+export type PaperclipOrg = { ok: boolean; base: string; nodes: OrgNode[]; errors: string[] };
+
+/** The company's reporting tree, as Paperclip builds it. */
+export async function getPaperclipOrg(): Promise<PaperclipOrg> {
+  const errors: string[] = [];
+  const cid = companyId();
+  if (!cid) {
+    errors.push('PAPERCLIP_COMPANY_ID is not set.');
+    return { ok: false, base: base(), nodes: [], errors };
+  }
+  const raw = await getJson(`/api/companies/${cid}/org`, errors);
+  const nodes = asArray(raw)
+    .map((n) => toOrgNode(n))
+    .filter((n): n is OrgNode => n !== null);
+  return { ok: nodes.length > 0, base: base(), nodes, errors };
+}
+
 export async function getPaperclipSnapshot(): Promise<PaperclipSnapshot> {
   const errors: string[] = [];
   const cid = companyId();

@@ -17,6 +17,8 @@ const KNOWN_ORPHANS: string[] = [
   'AgentChat',
   'AgentWorkPanel',
   'ConductorChat',
+  // Same story from /org: the Conductor's card in the seeded hierarchy.
+  'ConductorCard',
 ];
 
 const ROOT = process.cwd();

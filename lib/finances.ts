@@ -1,11 +1,12 @@
 /**
  * Finances domain — pure, real-ready. Income flows through a processor/account
  * registry (Stripe wired today; PayPal, FanBasis ×2, Wise ×2 are honest pending
- * slots until their keys land). Expenses are seeded SAMPLE data until the
- * statement-ingestion engine (Phase 2) replaces them with parsed bank/CC rows.
+ * slots until their keys land). Expenses come from uploaded statements or not
+ * at all.
  *
- * No faked money: an unwired account reports null income, never a zero that
- * reads as "earned nothing". The page renders pending honestly.
+ * No faked money, and that includes plausible money: an unwired account reports
+ * null income rather than a zero that reads as "earned nothing", and an unknown
+ * expense total stays null rather than becoming a sample that reads as spend.
  */
 
 // ── Income: processor / account registry ────────────────────────────────────
@@ -71,56 +72,36 @@ export function incomeAccounts(
   ];
 }
 
-/** Total month-to-date income across accounts; pending (null) counts as zero. */
-export function totalIncome(accounts: IncomeAccount[]): number {
-  return accounts.reduce((sum, a) => sum + (a.income ?? 0), 0);
+/**
+ * Month-to-date income across accounts, or `null` when not one of them is
+ * reporting a figure.
+ *
+ * A sum over no accounts is zero arithmetically and unknown in fact, and on a
+ * revenue tile those read as very different things: "$0" says the business
+ * earned nothing this month, when what actually happened is that no processor
+ * is connected. Accounts still pending are excluded from a real total rather
+ * than counted as zeroes that drag it down.
+ */
+export function totalIncome(accounts: IncomeAccount[]): number | null {
+  const reporting = accounts.filter((a) => a.income !== null);
+  if (reporting.length === 0) return null;
+  return reporting.reduce((sum, a) => sum + (a.income ?? 0), 0);
 }
 
-// ── Expenses: seeded sample until statement ingestion lands (Phase 2) ────────
-
-export type ExpenseItem = { id: string; label: string; category: string; monthly: number };
+// ── Expenses: uploaded statements, or nothing ───────────────────────────────
 
 /**
- * Placeholder recurring spend for an AI-operator / agency stack. Clearly a
- * SAMPLE in the UI — gets replaced by real parsed transactions once monthly
- * bank + credit-card statement uploads are wired.
+ * Net monthly cash flow — income minus expenses, `null` when expenses are not
+ * known.
+ *
+ * A sample expense set used to stand in here, and its total flowed straight
+ * into this number and the badge at the top of the page: with no processor
+ * connected the dashboard reported a confident ~-$3,900 a month that nobody had
+ * spent. Subtracting an unknown does not give you a smaller number, it gives
+ * you an unknown, and this returns one so a caller cannot render it as money.
  */
-export const SAMPLE_EXPENSES: ExpenseItem[] = [
-  { id: 'claude', label: 'Anthropic · Claude Max', category: 'Software', monthly: 200 },
-  { id: 'openai', label: 'OpenAI · ChatGPT', category: 'Software', monthly: 20 },
-  { id: 'cursor', label: 'Cursor', category: 'Software', monthly: 20 },
-  { id: 'higgsfield', label: 'Higgsfield', category: 'Software', monthly: 39 },
-  { id: 'elevenlabs', label: 'ElevenLabs', category: 'Software', monthly: 22 },
-  { id: 'figma', label: 'Figma', category: 'Software', monthly: 15 },
-  { id: 'notion', label: 'Notion', category: 'Software', monthly: 10 },
-  { id: 'wispr', label: 'Wispr Flow', category: 'Software', monthly: 15 },
-  { id: 'vercel', label: 'Vercel Pro', category: 'Infrastructure', monthly: 20 },
-  { id: 'supabase', label: 'Supabase', category: 'Infrastructure', monthly: 25 },
-  { id: 'domains', label: 'Domains & DNS', category: 'Infrastructure', monthly: 12 },
-  { id: 'attio', label: 'Attio', category: 'CRM & Revenue', monthly: 29 },
-  { id: 'fathom', label: 'Fathom', category: 'CRM & Revenue', monthly: 19 },
-  { id: 'meta-ads', label: 'Meta Ads', category: 'Advertising', monthly: 1500 },
-  { id: 'editor', label: 'Video editor (contract)', category: 'Contractors', monthly: 1200 },
-  { id: 'va', label: 'Virtual assistant', category: 'Contractors', monthly: 800 },
-];
-
-/** Sum of every recurring monthly cost. */
-export function totalExpenses(items: ExpenseItem[]): number {
-  return items.reduce((sum, e) => sum + e.monthly, 0);
-}
-
-/** Per-category totals, largest first. */
-export function expensesByCategory(items: ExpenseItem[]): { category: string; total: number }[] {
-  const totals = new Map<string, number>();
-  for (const e of items) totals.set(e.category, (totals.get(e.category) ?? 0) + e.monthly);
-  return [...totals.entries()]
-    .map(([category, total]) => ({ category, total }))
-    .sort((a, b) => b.total - a.total);
-}
-
-/** Net monthly cash flow — income minus expenses (may be negative). */
-export function net(income: number, expenses: number): number {
-  return income - expenses;
+export function net(income: number | null, expenses: number | null): number | null {
+  return income === null || expenses === null ? null : income - expenses;
 }
 
 // ── Stripe month-to-date helpers (pure; the connector feeds in raw charges) ──

@@ -2,12 +2,9 @@ import { describe, expect, test } from 'vitest';
 import {
   incomeAccounts,
   totalIncome,
-  totalExpenses,
-  expensesByCategory,
   net,
   monthStartUnix,
   sumChargeIncome,
-  SAMPLE_EXPENSES,
 } from '@/lib/finances';
 
 describe('incomeAccounts', () => {
@@ -70,33 +67,17 @@ describe('incomeAccounts', () => {
 });
 
 describe('totalIncome', () => {
-  test('sums live account income, treating pending (null) as zero', () => {
+  test('sums the accounts that are reporting, ignoring the pending ones', () => {
     const accounts = incomeAccounts({ connected: true, mtdUsd: 7000 });
     expect(totalIncome(accounts)).toBe(7000);
   });
-});
 
-describe('expenses', () => {
-  const fixture = [
-    { id: 'a', label: 'A', category: 'Software', monthly: 20 },
-    { id: 'b', label: 'B', category: 'Software', monthly: 30 },
-    { id: 'c', label: 'C', category: 'Advertising', monthly: 100 },
-  ];
-
-  test('totalExpenses sums the monthly amounts', () => {
-    expect(totalExpenses(fixture)).toBe(150);
-  });
-
-  test('expensesByCategory groups + sorts by total descending', () => {
-    expect(expensesByCategory(fixture)).toEqual([
-      { category: 'Advertising', total: 100 },
-      { category: 'Software', total: 50 },
-    ]);
-  });
-
-  test('SAMPLE_EXPENSES is a non-empty set of positive recurring costs', () => {
-    expect(SAMPLE_EXPENSES.length).toBeGreaterThan(0);
-    expect(SAMPLE_EXPENSES.every((e) => e.monthly > 0)).toBe(true);
+  // "$0 income" and "no processor connected" are different claims, and only one
+  // of them is true on a fresh install.
+  test('no account reporting is unknown income, not zero', () => {
+    const accounts = incomeAccounts({ connected: false, mtdUsd: null });
+    expect(accounts.every((a) => a.income === null)).toBe(true);
+    expect(totalIncome(accounts)).toBeNull();
   });
 });
 
@@ -104,6 +85,19 @@ describe('net', () => {
   test('income minus expenses, positive or negative', () => {
     expect(net(150, 100)).toBe(50);
     expect(net(100, 150)).toBe(-50);
+  });
+
+  // A sample expense set used to stand in for the real one, and its total fed
+  // straight into this number: with no processor connected the page reported a
+  // confident monthly loss nobody had made. Unknown out means unknown net.
+  test('unknown expenses give an unknown net, never a confident number', () => {
+    expect(net(150, null)).toBeNull();
+    expect(net(0, null)).toBeNull();
+  });
+
+  test('unknown income does too — an unconnected processor is not zero revenue', () => {
+    expect(net(null, 100)).toBeNull();
+    expect(net(null, null)).toBeNull();
   });
 });
 

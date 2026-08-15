@@ -1,13 +1,6 @@
 import { ArrowDownLeft, ArrowUpRight, Scale, Landmark, Send } from 'lucide-react';
 import { configuredProcessors, monthToDateIncome, stripeSnapshot, wiseOutgoing, fanbasisMonthToDateIncome } from '@/lib/connectors/payments';
-import {
-  incomeAccounts,
-  totalIncome,
-  totalExpenses,
-  expensesByCategory,
-  net,
-  SAMPLE_EXPENSES,
-} from '@/lib/finances';
+import { incomeAccounts, totalIncome, net } from '@/lib/finances';
 import { openLedger } from '@/lib/ledger';
 import { openBankStore } from '@/lib/bank';
 import { businessSeries } from '@/lib/bank-statements';
@@ -95,8 +88,11 @@ export default async function FinancesPage() {
   const monthLabel = ledgerMonth
     ? new Date(`${ledgerMonth}-01T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' })
     : null;
-  const byCategory = expensesLive ? ledgerSpend : expensesByCategory(SAMPLE_EXPENSES);
-  const expenses = expensesLive ? ledgerSpend.reduce((s, c) => s + c.total, 0) : totalExpenses(SAMPLE_EXPENSES);
+  // Expenses are whatever the uploaded statements say, or nothing. There is no
+  // stand-in: a plausible figure here is worse than a blank, because a blank
+  // sends you to upload a statement and a plausible figure does not.
+  const byCategory = ledgerSpend;
+  const expenses = expensesLive ? ledgerSpend.reduce((s, c) => s + c.total, 0) : null;
   const netMonthly = net(incomeMtd, expenses);
   const liveCount = accounts.filter((a) => a.live).length;
   const maxAccount = Math.max(...accounts.map((a) => a.income ?? 0), 1);
@@ -108,10 +104,14 @@ export default async function FinancesPage() {
         eyebrow="every processor, one view"
         title="Finances"
         right={
-          <Badge tone={netMonthly >= 0 ? 'ok' : 'err'}>
-            {netMonthly >= 0 ? '+' : '−'}
-            {usd(Math.abs(netMonthly))} net /mo
-          </Badge>
+          netMonthly === null ? (
+            <Badge ghost>net /mo · needs expenses</Badge>
+          ) : (
+            <Badge tone={netMonthly >= 0 ? 'ok' : 'err'}>
+              {netMonthly >= 0 ? '+' : '−'}
+              {usd(Math.abs(netMonthly))} net /mo
+            </Badge>
+          )
         }
       />
 
@@ -123,8 +123,12 @@ export default async function FinancesPage() {
             <ArrowDownLeft className="h-3 w-3 text-os-ok" strokeWidth={1.8} />
           </div>
           <div className="flex items-baseline justify-between gap-2">
-            <span className="font-mono text-[16px] font-semibold leading-none tracking-[-0.02em] text-os-ok">
-              {usd(incomeMtd)}
+            <span
+              className={`font-mono text-[16px] font-semibold leading-none tracking-[-0.02em] ${
+                incomeMtd === null ? '' : 'text-os-ok'
+              }`}
+            >
+              {incomeMtd === null ? '—' : usd(incomeMtd)}
             </span>
             <span className="min-w-0 truncate font-mono text-[9.5px] uppercase tracking-[0.1em] text-os-dim">
               {liveCount}/{accounts.length} live
@@ -138,11 +142,13 @@ export default async function FinancesPage() {
             <ArrowUpRight className="h-3 w-3 text-os-err" strokeWidth={1.8} />
           </div>
           <div className="flex items-baseline justify-between gap-2">
-            <span className="font-mono text-[16px] font-semibold leading-none tracking-[-0.02em]">{usd(expenses)}</span>
+            <span className="font-mono text-[16px] font-semibold leading-none tracking-[-0.02em]">
+              {expenses === null ? '—' : usd(expenses)}
+            </span>
             <span
-              className={`min-w-0 truncate font-mono text-[9.5px] uppercase tracking-[0.1em] ${expensesLive ? 'text-os-ok' : 'text-os-warn'}`}
+              className={`min-w-0 truncate font-mono text-[9.5px] uppercase tracking-[0.1em] ${expensesLive ? 'text-os-ok' : 'text-os-dim'}`}
             >
-              {expensesLive ? `uploaded · ${monthLabel}` : 'sample'}
+              {expensesLive ? `uploaded · ${monthLabel}` : 'upload a statement'}
             </span>
           </div>
         </div>
@@ -154,12 +160,15 @@ export default async function FinancesPage() {
           </div>
           <div className="flex items-baseline justify-between gap-2">
             <span
-              className={`font-mono text-[16px] font-semibold leading-none tracking-[-0.02em] ${netMonthly >= 0 ? 'text-os-ok' : 'text-os-err'}`}
+              className={`font-mono text-[16px] font-semibold leading-none tracking-[-0.02em] ${
+                netMonthly === null ? '' : netMonthly >= 0 ? 'text-os-ok' : 'text-os-err'
+              }`}
             >
-              {netMonthly >= 0 ? '' : '−'}
-              {usd(Math.abs(netMonthly))}
+              {netMonthly === null ? '—' : `${netMonthly >= 0 ? '' : '−'}${usd(Math.abs(netMonthly))}`}
             </span>
-            <span className="min-w-0 truncate font-mono text-[9.5px] uppercase tracking-[0.1em] text-os-dim">in − out</span>
+            <span className="min-w-0 truncate font-mono text-[9.5px] uppercase tracking-[0.1em] text-os-dim">
+              {netMonthly === null ? 'out unknown' : 'in − out'}
+            </span>
           </div>
         </div>
 
@@ -196,38 +205,57 @@ export default async function FinancesPage() {
       <section className="mb-5">
         <SectionHead
           label="Monthly expenses · by category"
-          count={expensesLive && monthLabel ? `${usd(expenses)} · ${monthLabel}` : `${usd(expenses)} /mo`}
+          count={expensesLive && monthLabel && expenses !== null ? `${usd(expenses)} · ${monthLabel}` : 'no statement'}
         />
-        <div className="grid items-stretch gap-3.5 lg:grid-cols-[1.15fr_1fr_0.85fr]">
-          {/* where the money goes — share per category */}
-          <SharePie
-            items={byCategory.map((c) => ({ key: c.category, label: c.category, value: Math.round(c.total * 100) }))}
-            total={Math.round(expenses * 100)}
-            centerLabel={expensesLive && monthLabel ? monthLabel : 'per month'}
-            format={(cents) => usd(cents / 100)}
-            donutPx={190}
-            ariaLabel="Monthly expenses by category"
-          />
+        {expensesLive && expenses !== null ? (
+          <div className="grid items-stretch gap-3.5 lg:grid-cols-[1.15fr_1fr_0.85fr]">
+            {/* where the money goes — share per category */}
+            <SharePie
+              items={byCategory.map((c) => ({ key: c.category, label: c.category, value: Math.round(c.total * 100) }))}
+              total={Math.round(expenses * 100)}
+              centerLabel={monthLabel ?? 'per month'}
+              format={(cents) => usd(cents / 100)}
+              donutPx={190}
+              ariaLabel="Monthly expenses by category"
+            />
 
-          <div className="rounded-lg-t border border-os-border bg-os-surface p-4">
-            <div className="flex flex-col gap-2.5">
-              {byCategory.map((c) => (
-                <div key={c.category}>
-                  <div className="mb-1 flex items-baseline justify-between gap-2 font-mono text-[11px]">
-                    <span className="text-os-muted">{c.category}</span>
-                    <span className="text-os-text">{usd(c.total)}</span>
+            <div className="rounded-lg-t border border-os-border bg-os-surface p-4">
+              <div className="flex flex-col gap-2.5">
+                {byCategory.map((c) => (
+                  <div key={c.category}>
+                    <div className="mb-1 flex items-baseline justify-between gap-2 font-mono text-[11px]">
+                      <span className="text-os-muted">{c.category}</span>
+                      <span className="text-os-text">{usd(c.total)}</span>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-sm-t bg-os-surface2">
+                      <div className="h-full bg-os-accent opacity-60" style={{ width: `${(c.total / maxCategory) * 100}%` }} />
+                    </div>
                   </div>
-                  <div className="h-1.5 overflow-hidden rounded-sm-t bg-os-surface2">
-                    <div className="h-full bg-os-accent opacity-60" style={{ width: `${(c.total / maxCategory) * 100}%` }} />
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
 
-          {/* Statement ingestion — upload a CSV to replace the sample figures */}
-          <StatementUploader />
-        </div>
+            <StatementUploader />
+          </div>
+        ) : (
+          // A chart drawn from nothing is a chart of nothing. The uploader is
+          // the only thing on this half of the page that can change the answer,
+          // so it gets the space the pie was using.
+          <div className="grid items-stretch gap-3.5 lg:grid-cols-[1.4fr_1fr]">
+            <div className="rounded-lg-t border border-dashed border-os-border bg-os-surface px-4 py-5">
+              <p className="font-mono text-[11.5px] leading-relaxed text-os-muted">
+                No expenses recorded, which is why net is blank rather than equal to income.
+                Nothing stands in for a statement here — a plausible total is harder to catch than
+                an empty one, and it would quietly become the number at the top of this page.
+              </p>
+              <p className="mt-2.5 font-mono text-[11.5px] leading-relaxed text-os-dim">
+                Upload a bank or card statement and every figure in this section becomes yours:
+                category totals, the split, and a net that means something.
+              </p>
+            </div>
+            <StatementUploader />
+          </div>
+        )}
       </section>
 
       <section className="mb-5">

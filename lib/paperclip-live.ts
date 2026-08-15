@@ -69,9 +69,21 @@ export type PaperclipSnapshot = {
   errors: string[];
 };
 
-const base = (): string =>
+export const paperclipBase = (): string =>
   (process.env.PAPERCLIP_BASE_URL ?? 'http://127.0.0.1:3100').replace(/\/$/, '');
-const companyId = (): string => process.env.PAPERCLIP_COMPANY_ID ?? '';
+export const paperclipCompanyId = (): string => process.env.PAPERCLIP_COMPANY_ID ?? '';
+
+const base = paperclipBase;
+const companyId = paperclipCompanyId;
+
+/** Auth header for Paperclip. Loopback accepts writes without one; the bearer
+ *  is sent anyway when PAPERCLIP_API_KEY is set. */
+export function paperclipHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const headers: Record<string, string> = { accept: 'application/json', ...extra };
+  const key = process.env.PAPERCLIP_API_KEY ?? '';
+  if (key) headers.authorization = `Bearer ${key}`;
+  return headers;
+}
 
 async function getJson(path: string, errors: string[], timeoutMs = 5000): Promise<unknown | null> {
   const headers: Record<string, string> = { accept: 'application/json' };

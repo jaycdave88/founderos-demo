@@ -37,7 +37,10 @@ export type SkillCard = {
 };
 
 const STATUS: Record<string, string> = { live: 'var(--ok)', learning: 'var(--warn)', planned: 'var(--text-3)' };
-const GROUP_ORDER = ['Spec · build · review', 'Engineering', 'Sales', 'Content', 'Ops', 'Creative', 'Skills', 'Firecrawl'];
+// "Installed" leads: what the company has beats what it could have. Catalog
+// groups are named `Catalog · <category>` and fall through to the alphabetical
+// tail, which keeps them together and after it.
+const GROUP_ORDER = ['Installed', 'Spec · build · review', 'Engineering', 'Sales', 'Content', 'Ops', 'Creative', 'Skills', 'Firecrawl'];
 
 /** The tool/nature each skill runs on, as an icon. */
 function skillIcon(card: SkillCard): LucideIcon {

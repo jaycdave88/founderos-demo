@@ -4,7 +4,20 @@ import path from 'node:path';
 
 // Every component must be imported somewhere — no dead files. If a component is
 // intentionally kept unused (rare), add its basename here with a reason.
-const KNOWN_ORPHANS: string[] = [];
+const KNOWN_ORPHANS: string[] = [
+  // /agents now renders the Paperclip roster, and these four drove the seeded
+  // one: chat with a DB agent, its task/cron panel, the run feed, and the
+  // Conductor panel. They are not dead ends — each still works against the
+  // SQLite runtime in lib/agents, and the plan is to seed that runtime rather
+  // than retire it. Deleting them would decide that question by default.
+  //
+  // The stale-entry test below is the deadline: if seeding brings them back
+  // into use, or the plan changes and they go, this list has to be updated.
+  'AgentActivityFeed',
+  'AgentChat',
+  'AgentWorkPanel',
+  'ConductorChat',
+];
 
 const ROOT = process.cwd();
 

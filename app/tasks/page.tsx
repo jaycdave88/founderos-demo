@@ -8,6 +8,7 @@
 import { PageHeader } from '@/components/PageHeader';
 import { getPaperclipSnapshot } from '@/lib/paperclip-live';
 import { TaskBoard, type BoardIssue } from './board';
+import { NewTask } from './new-task';
 
 export const dynamic = 'force-dynamic';
 
@@ -59,7 +60,12 @@ export default async function TasksPage() {
         </div>
       )}
 
-      {snap.ok && <TaskBoard issues={issues} />}
+      {snap.ok && (
+        <>
+          <NewTask agents={snap.agents.map((agent) => ({ id: agent.id, name: agent.name }))} />
+          <TaskBoard issues={issues} />
+        </>
+      )}
     </div>
   );
 }

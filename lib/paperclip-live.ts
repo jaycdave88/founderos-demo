@@ -7,6 +7,43 @@
  * and broke its smoke suites. Edit it here.
  */
 
+import { z } from 'zod';
+
+const CompanyIdSchema = z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+const PaperclipCompanySchema = z.object({
+  id: CompanyIdSchema,
+  name: z.string().trim().min(1).nullish(),
+});
+
+export type PaperclipCompany = {
+  id: string;
+  name: string;
+};
+
+export type PaperclipCompanies = {
+  ok: boolean;
+  base: string;
+  companies: PaperclipCompany[];
+  errors: string[];
+};
+
+export type PaperclipCompanySummary = PaperclipCompany & {
+  ok: boolean;
+  agentCount: number;
+  issueCount: number;
+  openIssueCount: number;
+  blockedIssueCount: number;
+  unassignedOpenIssueCount: number;
+  errors: string[];
+};
+
+export type PaperclipPortfolio = {
+  ok: boolean;
+  base: string;
+  companies: PaperclipCompanySummary[];
+  errors: string[];
+};
+
 export type PaperclipAgent = {
   id: string;
   name: string;
@@ -75,6 +112,11 @@ export const paperclipCompanyId = (): string => process.env.PAPERCLIP_COMPANY_ID
 
 const base = paperclipBase;
 const companyId = paperclipCompanyId;
+
+function selectedCompanyId(explicit?: string): string {
+  const parsed = CompanyIdSchema.safeParse(explicit?.trim() || companyId());
+  return parsed.success ? parsed.data : '';
+}
 
 /** Auth header for Paperclip. Loopback accepts writes without one; the bearer
  *  is sent anyway when PAPERCLIP_API_KEY is set. */
@@ -178,6 +220,20 @@ function toIssue(raw: unknown): PaperclipIssue | null {
   };
 }
 
+export async function getPaperclipCompanies(): Promise<PaperclipCompanies> {
+  const errors: string[] = [];
+  const raw = await getJson('/api/companies', errors);
+  const companies = asArray(raw).flatMap((item, index) => {
+    const parsed = PaperclipCompanySchema.safeParse(item);
+    if (!parsed.success) {
+      errors.push(`/api/companies[${index}] -> invalid company payload`);
+      return [];
+    }
+    return [{ id: parsed.data.id, name: parsed.data.name ?? parsed.data.id }];
+  });
+  return { ok: raw !== null && errors.length === 0, base: base(), companies, errors };
+}
+
 /** A node in Paperclip's reporting tree. `reports` is the agents under it. */
 export type OrgNode = {
   id: string;
@@ -213,11 +269,11 @@ function toOrgNode(raw: unknown, depth = 0): OrgNode | null {
 export type PaperclipOrg = { ok: boolean; base: string; nodes: OrgNode[]; errors: string[] };
 
 /** The company's reporting tree, as Paperclip builds it. */
-export async function getPaperclipOrg(): Promise<PaperclipOrg> {
+export async function getPaperclipOrg(explicitCompanyId?: string): Promise<PaperclipOrg> {
   const errors: string[] = [];
-  const cid = companyId();
+  const cid = selectedCompanyId(explicitCompanyId);
   if (!cid) {
-    errors.push('PAPERCLIP_COMPANY_ID is not set.');
+    errors.push('A valid Paperclip company id is required.');
     return { ok: false, base: base(), nodes: [], errors };
   }
   const raw = await getJson(`/api/companies/${cid}/org`, errors);
@@ -227,9 +283,12 @@ export async function getPaperclipOrg(): Promise<PaperclipOrg> {
   return { ok: nodes.length > 0, base: base(), nodes, errors };
 }
 
-export async function getPaperclipSnapshot(): Promise<PaperclipSnapshot> {
+export async function getPaperclipSnapshot(
+  explicitCompanyId?: string,
+  options: { includeDocuments?: boolean } = {},
+): Promise<PaperclipSnapshot> {
   const errors: string[] = [];
-  const cid = companyId();
+  const cid = selectedCompanyId(explicitCompanyId);
   const empty: PaperclipSnapshot = {
     ok: false,
     base: base(),
@@ -243,7 +302,7 @@ export async function getPaperclipSnapshot(): Promise<PaperclipSnapshot> {
 
   if (!cid) {
     errors.push(
-      'PAPERCLIP_COMPANY_ID is not set. Run scripts/40-paperclip.sh, then scripts/60-founderos.sh to rewrite .env.local.',
+      'A valid Paperclip company id is required. Set PAPERCLIP_COMPANY_ID or select a company.',
     );
     return empty;
   }
@@ -272,7 +331,7 @@ export async function getPaperclipSnapshot(): Promise<PaperclipSnapshot> {
   // the board rather than making the reader click through. One request per
   // issue, in parallel, capped — a company with hundreds of issues should not
   // turn one page load into hundreds of round trips.
-  const withDocs = issues.slice(0, 40);
+  const withDocs = options.includeDocuments === false ? [] : issues.slice(0, 40);
   const docLists = await Promise.all(
     withDocs.map(async (issue) => {
       const raw = await getJson(`/api/issues/${issue.id}/documents`, []);
@@ -289,11 +348,48 @@ export async function getPaperclipSnapshot(): Promise<PaperclipSnapshot> {
 
   return {
     ...empty,
-    ok: agents.length > 0 || issues.length > 0,
+    ok: company !== null && agentsRaw !== null && issuesRaw !== null,
     companyName,
     agents,
     issues,
     documents,
+  };
+}
+
+export async function getPaperclipPortfolio(): Promise<PaperclipPortfolio> {
+  const listed = await getPaperclipCompanies();
+  const snapshots = await Promise.all(
+    listed.companies.map((company) =>
+      getPaperclipSnapshot(company.id, { includeDocuments: false }),
+    ),
+  );
+  const companies = listed.companies.map((company, index): PaperclipCompanySummary => {
+    const snapshot = snapshots[index];
+    const open = snapshot.issues.filter(
+      (issue) => issue.status !== 'done' && issue.status !== 'cancelled',
+    );
+    return {
+      ...company,
+      ok: snapshot.ok,
+      agentCount: snapshot.agents.length,
+      issueCount: snapshot.issues.length,
+      openIssueCount: open.length,
+      blockedIssueCount: open.filter((issue) => issue.status === 'blocked').length,
+      unassignedOpenIssueCount: open.filter((issue) => !issue.assigneeAgentId).length,
+      errors: snapshot.errors,
+    };
+  });
+  const errors = [
+    ...listed.errors,
+    ...companies.flatMap((company) =>
+      company.errors.map((error) => `${company.name}: ${error}`),
+    ),
+  ];
+  return {
+    ok: listed.ok && companies.every((company) => company.ok),
+    base: listed.base,
+    companies,
+    errors,
   };
 }
 
@@ -333,12 +429,13 @@ async function send(method: 'POST' | 'PATCH', path: string, payload: unknown): P
 const post = (path: string, payload: unknown) => send('POST', path, payload);
 
 export async function createIssue(input: {
+  companyId?: string;
   title: string;
   description?: string;
   assigneeAgentId?: string;
 }): Promise<WriteResult> {
-  const cid = companyId();
-  if (!cid) return { ok: false, detail: 'PAPERCLIP_COMPANY_ID is not set' };
+  const cid = selectedCompanyId(input.companyId);
+  if (!cid) return { ok: false, detail: 'a valid companyId is required' };
   if (!input.title.trim()) return { ok: false, detail: 'title is required' };
   return post(`/api/companies/${cid}/issues`, {
     title: input.title,

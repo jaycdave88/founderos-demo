@@ -1,0 +1,142 @@
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import {
+  createIssue,
+  getPaperclipCompanies,
+  getPaperclipPortfolio,
+  getPaperclipSnapshot,
+} from '@/lib/paperclip-live';
+import { GET } from '@/app/api/paperclip/route';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
+function json(value: unknown, status = 200) {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+function paperclipFetch() {
+  return vi.fn(async (url: string, init?: RequestInit) => {
+    const path = new URL(url).pathname + new URL(url).search;
+    if (path === '/api/companies') {
+      return json([
+        { id: 'company-a', name: 'Alpha' },
+        { id: 'company-b', name: 'Beta' },
+      ]);
+    }
+    if (path === '/api/companies/company-a') return json({ id: 'company-a', name: 'Alpha' });
+    if (path === '/api/companies/company-b') return json({ id: 'company-b', name: 'Beta' });
+    if (path === '/api/companies/company-a/agents') {
+      return json([{ id: 'agent-a', name: 'Ada', status: 'idle' }]);
+    }
+    if (path === '/api/companies/company-b/agents') {
+      return json([
+        { id: 'agent-b1', name: 'Bea', status: 'running' },
+        { id: 'agent-b2', name: 'Ben', status: 'idle' },
+      ]);
+    }
+    if (path === '/api/companies/company-a/issues?view=compact') {
+      return json([{ id: 'issue-a', status: 'done', assigneeAgentId: 'agent-a' }]);
+    }
+    if (path === '/api/companies/company-b/issues?view=compact') {
+      return json([
+        { id: 'issue-b1', status: 'in_progress', assigneeAgentId: 'agent-b1' },
+        { id: 'issue-b2', status: 'blocked', assigneeAgentId: 'agent-b2' },
+        { id: 'issue-b3', status: 'backlog', assigneeAgentId: null },
+      ]);
+    }
+    if (path === '/api/issues/issue-b1/documents') return json([]);
+    if (path === '/api/issues/issue-b2/documents') return json([]);
+    if (path === '/api/issues/issue-b3/documents') return json([]);
+    if (path === '/api/companies/company-b/issues' && init?.method === 'POST') return json({}, 201);
+    return json({ error: `unexpected ${init?.method ?? 'GET'} ${path}` }, 404);
+  });
+}
+
+describe('Paperclip company portfolio', () => {
+  test('lists every company from Paperclip instead of only the configured default', async () => {
+    vi.stubGlobal('fetch', paperclipFetch());
+
+    const result = await getPaperclipCompanies();
+
+    expect(result.ok).toBe(true);
+    expect(result.companies).toEqual([
+      { id: 'company-a', name: 'Alpha' },
+      { id: 'company-b', name: 'Beta' },
+    ]);
+  });
+
+  test('summarises delivery risk separately for every company', async () => {
+    vi.stubGlobal('fetch', paperclipFetch());
+
+    const result = await getPaperclipPortfolio();
+
+    expect(result.ok).toBe(true);
+    expect(result.companies).toEqual([
+      expect.objectContaining({
+        id: 'company-a',
+        name: 'Alpha',
+        agentCount: 1,
+        issueCount: 1,
+        openIssueCount: 0,
+        blockedIssueCount: 0,
+        unassignedOpenIssueCount: 0,
+      }),
+      expect.objectContaining({
+        id: 'company-b',
+        name: 'Beta',
+        agentCount: 2,
+        issueCount: 3,
+        openIssueCount: 3,
+        blockedIssueCount: 1,
+        unassignedOpenIssueCount: 1,
+      }),
+    ]);
+  });
+
+  test('an explicit company id overrides the default for every scoped read', async () => {
+    const fetchMock = paperclipFetch();
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubEnv('PAPERCLIP_COMPANY_ID', 'company-a');
+
+    const snapshot = await getPaperclipSnapshot('company-b');
+
+    expect(snapshot.companyId).toBe('company-b');
+    expect(snapshot.companyName).toBe('Beta');
+    expect(snapshot.agents).toHaveLength(2);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/company-a/'))).toBe(false);
+  });
+
+  test('new work is created in the selected company, not whichever company is in env', async () => {
+    const fetchMock = paperclipFetch();
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubEnv('PAPERCLIP_COMPANY_ID', 'company-a');
+
+    const result = await createIssue({ companyId: 'company-b', title: 'Publish the winning cut' });
+
+    expect(result.ok).toBe(true);
+    const call = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/api/companies/company-b/issues'));
+    expect(call).toBeDefined();
+    expect(call?.[1]?.method).toBe('POST');
+  });
+
+  test('the API can return a selected company or the whole portfolio', async () => {
+    vi.stubGlobal('fetch', paperclipFetch());
+    vi.stubEnv('PAPERCLIP_COMPANY_ID', 'company-a');
+
+    const selected = await GET(new Request('http://localhost/api/paperclip?companyId=company-b'));
+    expect(selected.status).toBe(200);
+    expect(await selected.json()).toMatchObject({ companyId: 'company-b', counts: { agents: 2, issues: 3 } });
+
+    const portfolio = await GET(new Request('http://localhost/api/paperclip?view=portfolio'));
+    expect(portfolio.status).toBe(200);
+    expect(await portfolio.json()).toMatchObject({
+      ok: true,
+      counts: { companies: 2, agents: 3, openIssues: 3, blockedIssues: 1, unassignedOpenIssues: 1 },
+    });
+  });
+});

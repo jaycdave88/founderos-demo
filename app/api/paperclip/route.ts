@@ -10,6 +10,7 @@ import { NextResponse } from 'next/server';
 import {
   addComment,
   createIssue,
+  getPaperclipPortfolio,
   getPaperclipSnapshot,
   setIssueStatus,
   wakeAgent,
@@ -17,8 +18,33 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
-  const snap = await getPaperclipSnapshot();
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  if (url.searchParams.get('view') === 'portfolio') {
+    const portfolio = await getPaperclipPortfolio();
+    return NextResponse.json({
+      ...portfolio,
+      counts: {
+        companies: portfolio.companies.length,
+        agents: portfolio.companies.reduce((total, company) => total + company.agentCount, 0),
+        issues: portfolio.companies.reduce((total, company) => total + company.issueCount, 0),
+        openIssues: portfolio.companies.reduce(
+          (total, company) => total + company.openIssueCount,
+          0,
+        ),
+        blockedIssues: portfolio.companies.reduce(
+          (total, company) => total + company.blockedIssueCount,
+          0,
+        ),
+        unassignedOpenIssues: portfolio.companies.reduce(
+          (total, company) => total + company.unassignedOpenIssueCount,
+          0,
+        ),
+      },
+    });
+  }
+
+  const snap = await getPaperclipSnapshot(url.searchParams.get('companyId') ?? undefined);
   const byStatus: Record<string, number> = {};
   for (const issue of snap.issues) {
     const key = issue.status ?? 'unknown';
@@ -56,6 +82,7 @@ export async function POST(request: Request) {
   switch (action) {
     case 'create_issue':
       result = await createIssue({
+        companyId: field(payload, 'companyId'),
         title: field(payload, 'title'),
         description: field(payload, 'description'),
         assigneeAgentId: field(payload, 'assigneeAgentId'),

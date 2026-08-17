@@ -7,7 +7,12 @@
  * surrounding app does with CSS.
  */
 import type { CSSProperties } from 'react';
-import { getPaperclipSnapshot, type PaperclipIssue } from '@/lib/paperclip-live';
+import {
+  getPaperclipPortfolio,
+  getPaperclipSnapshot,
+  paperclipCompanyId,
+  type PaperclipIssue,
+} from '@/lib/paperclip-live';
 import { CommentBox, NewTask, WakeButton } from './controls';
 
 export const dynamic = 'force-dynamic';
@@ -59,8 +64,20 @@ function ago(iso: string | null | undefined): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
-export default async function PaperclipPage() {
-  const snap = await getPaperclipSnapshot();
+export default async function PaperclipPage(props: {
+  searchParams?: { companyId?: string };
+}) {
+  const searchParams = props?.searchParams;
+  const portfolio = await getPaperclipPortfolio();
+  const requested = searchParams?.companyId;
+  const configured = paperclipCompanyId();
+  const selectedCompanyId =
+    portfolio.companies.find((company) => company.id === requested)?.id ??
+    portfolio.companies.find((company) => company.id === configured)?.id ??
+    portfolio.companies[0]?.id ??
+    requested ??
+    configured;
+  const snap = await getPaperclipSnapshot(selectedCompanyId);
 
   const byStatus = new Map<string, PaperclipIssue[]>();
   for (const issue of snap.issues) {
@@ -84,6 +101,56 @@ export default async function PaperclipPage() {
           : `not reachable · ${snap.base}`}
       </div>
 
+      <div style={{ ...card, marginBottom: 22 }}>
+        <div style={{ color: '#7a7a7a', fontSize: 11, letterSpacing: '0.08em', marginBottom: 10 }}>
+          COMPANY PORTFOLIO
+        </div>
+        <div style={{ color: '#a3a3a3', fontSize: 12, marginBottom: 12 }}>
+          {portfolio.companies.length} companies ·{' '}
+          {portfolio.companies.reduce((total, company) => total + company.agentCount, 0)} agents ·{' '}
+          {portfolio.companies.reduce((total, company) => total + company.openIssueCount, 0)} open issues
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          {portfolio.companies.map((company) => {
+            const selected = company.id === snap.companyId;
+            const attention = company.blockedIssueCount + company.unassignedOpenIssueCount;
+            return (
+              <a
+                key={company.id}
+                href={`/paperclip?companyId=${encodeURIComponent(company.id)}`}
+                style={{
+                  display: 'block',
+                  minWidth: 210,
+                  padding: '10px 12px',
+                  border: `1px solid ${selected ? '#22c55e' : attention > 0 ? '#7f1d1d' : '#262626'}`,
+                  borderRadius: 4,
+                  color: '#e5e5e5',
+                  background: selected ? '#0d1f14' : '#080808',
+                  textDecoration: 'none',
+                }}
+              >
+                <div style={{ fontSize: 13, marginBottom: 5 }}>{company.name}</div>
+                <div style={{ color: '#7a7a7a', fontSize: 11 }}>
+                  {company.agentCount} agents · {company.openIssueCount} open
+                </div>
+                <div style={{ color: attention > 0 ? '#f87171' : '#22c55e', fontSize: 11, marginTop: 4 }}>
+                  {company.ok
+                    ? attention > 0
+                      ? `${company.blockedIssueCount} blocked · ${company.unassignedOpenIssueCount} unassigned`
+                      : 'no delivery blockers'
+                    : 'company read failed'}
+                </div>
+              </a>
+            );
+          })}
+          {portfolio.companies.length === 0 && (
+            <div style={{ color: '#f87171', fontSize: 12 }}>
+              No companies returned from Paperclip. {portfolio.errors.join(' · ')}
+            </div>
+          )}
+        </div>
+      </div>
+
       {snap.errors.length > 0 && (
         <div style={{ ...card, borderColor: '#7f1d1d', marginBottom: 22 }}>
           <div style={{ color: '#f87171', fontSize: 11, letterSpacing: '0.08em', marginBottom: 8 }}>
@@ -101,7 +168,10 @@ export default async function PaperclipPage() {
         <div style={{ color: '#7a7a7a', fontSize: 11, letterSpacing: '0.08em', marginBottom: 10 }}>
           NEW TASK
         </div>
-        <NewTask agents={snap.agents.map((a) => ({ id: a.id, name: a.name }))} />
+        <NewTask
+          companyId={snap.companyId}
+          agents={snap.agents.map((a) => ({ id: a.id, name: a.name }))}
+        />
       </div>
 
       <div style={{ ...card, marginBottom: 22 }}>

@@ -69,7 +69,7 @@ function useAction() {
   return { busy, note, send };
 }
 
-export function NewTask({ agents }: { agents: Agent[] }) {
+export function NewTask({ companyId, agents }: { companyId: string; agents: Agent[] }) {
   const { busy, note, send } = useAction();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -105,7 +105,13 @@ export function NewTask({ agents }: { agents: Agent[] }) {
           style={{ ...button, opacity: busy || !title.trim() ? 0.5 : 1 }}
           disabled={busy || !title.trim()}
           onClick={async () => {
-            const ok = await send({ action: 'create_issue', title, description, assigneeAgentId });
+            const ok = await send({
+              action: 'create_issue',
+              companyId,
+              title,
+              description,
+              assigneeAgentId,
+            });
             if (ok) {
               setTitle('');
               setDescription('');

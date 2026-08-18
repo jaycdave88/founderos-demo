@@ -9,6 +9,7 @@ beforeAll(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   delete process.env.MANYCHAT_API_KEY;
+  delete process.env.SOCIAL_MODE;
 });
 
 const URL = 'http://localhost/api/social/dm/reply';
@@ -16,12 +17,23 @@ const post = (body: unknown) =>
   new Request(URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 describe('POST /api/social/dm/reply', () => {
+  test('preview mode blocks the external reply before validation or network access', async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    const { POST } = await import('@/app/api/social/dm/reply/route');
+    const res = await POST(post({ subscriberId: 'ig-alex', text: 'do not send' }));
+    expect(res.status).toBe(409);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   test('400 on a missing text/subscriberId', async () => {
+    process.env.SOCIAL_MODE = 'production';
     const { POST } = await import('@/app/api/social/dm/reply/route');
     expect((await POST(post({ subscriberId: 'ig-alex' }))).status).toBe(400);
   });
 
   test('honest 502 and stores nothing when ManyChat is not connected', async () => {
+    process.env.SOCIAL_MODE = 'production';
     const { POST } = await import('@/app/api/social/dm/reply/route');
     const { getDb } = await import('@/lib/data');
     const before = getDb().social.dmMessages('instagram').filter((m) => m.direction === 'out').length;
@@ -35,6 +47,7 @@ describe('POST /api/social/dm/reply', () => {
   });
 
   test('sends via ManyChat and stores the outbound message when keyed', async () => {
+    process.env.SOCIAL_MODE = 'production';
     process.env.MANYCHAT_API_KEY = 'sk-test';
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ status: 'success' }) })));
 

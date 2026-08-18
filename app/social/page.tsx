@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { Instagram, Linkedin, Mail, Music2, Twitter, Youtube, type LucideIcon } from 'lucide-react';
 import { getDb } from '@/lib/data';
 import { mergeSocialPosts, readPublishReceipts } from '@/lib/publish-receipts';
+import { socialControls, socialHeaderLabel } from '@/lib/social-mode';
 import {
   audienceGrowth,
   audienceSeries,
@@ -13,7 +14,7 @@ import {
   PLATFORM_LABELS,
 } from '@/lib/social';
 import { syncFromZernioLive } from '@/lib/social-live';
-import { zernioRecentPosts, zernioPostDays } from '@/lib/connectors/zernio';
+import { zernioKey, zernioRecentPosts, zernioPostDays } from '@/lib/connectors/zernio';
 import { buildEmailList, syncBeehiivEmail } from '@/lib/email-list';
 import { likeToViewRatio, averageLikeToView, formatRatioPct } from '@/lib/engagement';
 import type { SocialPlatform } from '@/lib/schemas';
@@ -35,15 +36,14 @@ const PLATFORM_ICONS: Record<SocialPlatform, LucideIcon> = {
   linkedin: Linkedin,
 };
 
-// Recent published content — seeded dummy until a Zernio published-posts pull
-// lands (the publish queue below is the real, wired path). views/likes carry
-// the like-to-view (engagement) ratio shown per post + averaged in the header.
+// Explicitly fictional preview content. It demonstrates the layout and quality
+// review surface; none of these rows represent a real account or performance.
 const RECENT_POSTS = [
-  { tag: 'Instagram · Reel', ago: '2h', caption: '3 agents that run my business while I sleep', kind: 'views', views: 12400, likes: 1104 },
-  { tag: 'TikTok · Video', ago: '6h', caption: 'POV: your operating system has a command palette', kind: 'views', views: 8100, likes: 640 },
-  { tag: 'X · Thread', ago: '1d', caption: 'How I wired 7 real connectors into one OS', kind: 'impressions', views: 1200, likes: 74 },
-  { tag: 'YouTube · Long', ago: '2d', caption: 'Founder OS walkthrough — building in public #4', kind: 'views', views: 940, likes: 88 },
-  { tag: 'Instagram · Carousel', ago: '3d', caption: 'The larp-first, real-ready architecture', kind: 'reach', views: 6700, likes: 717 },
+  { tag: 'Demo · Instagram Reel', ago: '2h', caption: '3 agents that run my business while I sleep', kind: 'demo views', views: 12400, likes: 1104 },
+  { tag: 'Demo · TikTok Video', ago: '6h', caption: 'POV: your operating system has a command palette', kind: 'demo views', views: 8100, likes: 640 },
+  { tag: 'Demo · X Thread', ago: '1d', caption: 'How I wired 7 real connectors into one OS', kind: 'demo impressions', views: 1200, likes: 74 },
+  { tag: 'Demo · YouTube Long', ago: '2d', caption: 'Founder OS walkthrough — building in public #4', kind: 'demo views', views: 940, likes: 88 },
+  { tag: 'Demo · Instagram Carousel', ago: '3d', caption: 'The larp-first, real-ready architecture', kind: 'demo reach', views: 6700, likes: 717 },
 ];
 
 // Human label for a raw Zernio platform string (falls back to capitalising it).
@@ -85,11 +85,19 @@ function agoFrom(iso: string | null): string {
 
 export default async function SocialPage() {
   const db = getDb();
-  // Live follower-count sync from Zernio/Late (falls back to static config when
-  // the API is unreachable). This makes every figure on the page real-time.
-  await syncFromZernioLive(db);
-  // Live Beehiiv subscriber count (no-op without a key → seeded fallback).
-  await syncBeehiivEmail(db);
+  const controls = socialControls(process.env);
+  // Preview is a real network quarantine, not just a publishing circuit
+  // breaker. It always renders the local demo even if a credential happens to
+  // exist on disk. Production may use live read-only analytics independently
+  // of whether external publishing is enabled.
+  const liveAnalytics = controls.mode === 'production' && Boolean(zernioKey());
+  if (controls.mode === 'production') {
+    // Live follower-count sync from Zernio/Late (falls back to static config
+    // when the API is unreachable).
+    await syncFromZernioLive(db);
+    // Live Beehiiv subscriber count (no-op without a key → seeded fallback).
+    await syncBeehiivEmail(db);
+  }
   const dash = buildSocialDashboard(db);
   const email = buildEmailList(db);
   const posts = mergeSocialPosts(db.socialPosts.all(), readPublishReceipts());
@@ -98,7 +106,7 @@ export default async function SocialPage() {
   // behind Late's paid analytics add-on, so live posts show the post link in its
   // place — never invented numbers. Falls back to sample posts (with the L/V
   // ratio) only when the live history is empty.
-  const livePosts = await zernioRecentPosts(5);
+  const livePosts = controls.mode === 'production' ? await zernioRecentPosts(5) : [];
   const recentLive = livePosts.length > 0;
 
   const total = audienceTotal(db);
@@ -110,7 +118,7 @@ export default async function SocialPage() {
   // Late) for the interactive left-column charts. `today` is computed server-side
   // and passed down so the chart's date axis can't drift between server/client.
   const audiencePoints = audienceSeries(db).all.points;
-  const postDays = await zernioPostDays();
+  const postDays = controls.mode === 'production' ? await zernioPostDays() : [];
   const today = new Date().toISOString().slice(0, 10);
 
   return (
@@ -118,12 +126,32 @@ export default async function SocialPage() {
       <PageHeader
         eyebrow="audience"
         title="Social"
-        right={<Badge tone="ok">● zernio live</Badge>}
+        right={
+          <Badge tone={controls.canPublish ? 'err' : liveAnalytics ? 'ok' : 'warn'}>
+            ● {socialHeaderLabel(liveAnalytics, controls)}
+          </Badge>
+        }
       />
+
+      {!liveAnalytics && (
+        <div className="mb-6 rounded-lg-t border border-os-border bg-os-surface px-4 py-3 font-mono text-[11px] leading-relaxed text-os-muted">
+          {controls.mode === 'preview' ? (
+            <>
+              Preview workspace: audience totals, engagement, DMs and recent-post performance are fictional demo data.
+              Live social connections are not contacted, and external publishing is off.
+            </>
+          ) : (
+            <>
+              No live Zernio analytics are connected. Social performance is fictional fallback data, and external
+              publishing is {controls.canPublish ? 'armed' : 'off'}.
+            </>
+          )}
+        </div>
+      )}
 
       {/* Every account on the first screen — compact row, one cell per channel.
           Click through for the platform detail. */}
-      <SectionHead label="Accounts" count={`${formatFollowers(total)} total`} />
+      <SectionHead label="Accounts" count={`${formatFollowers(total)} ${liveAnalytics ? 'total' : 'demo total'}`} />
       <div className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
         {dash.platforms.map((p) => {
           const Icon = PLATFORM_ICONS[p.platform];
@@ -238,7 +266,7 @@ export default async function SocialPage() {
           count={
             recentLive
               ? `${livePosts.length} live · zernio`
-              : `${formatRatioPct(averageLikeToView(RECENT_POSTS))} avg L/V · sample`
+              : `${formatRatioPct(averageLikeToView(RECENT_POSTS))} avg L/V · fictional demo`
           }
         />
         <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-5">

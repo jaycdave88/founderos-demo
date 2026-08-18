@@ -3,6 +3,7 @@ import { ArrowLeft, ExternalLink, Mail } from 'lucide-react';
 import { getNewsletters, newsletterSummary } from '@/lib/newsletters';
 import { beehiivSubscribers } from '@/lib/connectors/beehiiv';
 import { NewsletterList } from '@/components/NewsletterList';
+import { socialControls } from '@/lib/social-mode';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,7 +11,11 @@ const fmt = (n: number | null) => (n == null ? '—' : n.toLocaleString('en-US')
 const pct = (n: number) => `${n.toFixed(1)}%`;
 
 export default async function BeehiivDashboardPage() {
-  const [newsletters, subscribers] = await Promise.all([getNewsletters(), beehiivSubscribers()]);
+  const controls = socialControls(process.env);
+  const [newsletters, subscribers] = await Promise.all([
+    getNewsletters(),
+    controls.mode === 'production' ? beehiivSubscribers() : Promise.resolve(null),
+  ]);
   const summary = newsletterSummary(newsletters);
   const live = subscribers != null; // a real key resolved a subscriber count
 
@@ -32,7 +37,7 @@ export default async function BeehiivDashboardPage() {
           </div>
           <h1 className="text-[25px] font-bold uppercase leading-[1.1] tracking-[0.06em]">Newsletter</h1>
           <p className="mt-1 font-mono text-[11px] text-os-dim">
-            {live ? 'live via Beehiiv API' : 'seeded preview · add BEEHIIV_API_KEY for live'}
+            {live ? 'live via Beehiiv API' : 'fictional demo · live connection off · publishing off'}
           </p>
         </div>
         <a
@@ -48,7 +53,7 @@ export default async function BeehiivDashboardPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-xl border border-os-border bg-os-surface p-5">
-          <div className="text-xs uppercase tracking-wider text-os-muted">Subscribers</div>
+          <div className="text-xs uppercase tracking-wider text-os-muted">{live ? 'Subscribers' : 'Demo subscribers'}</div>
           <div className="mt-2 text-3xl font-bold tracking-tight">{fmt(subscribers)}</div>
         </div>
         <div className="rounded-xl border border-os-border bg-os-surface p-5">

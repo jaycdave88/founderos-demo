@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getDb } from '@/lib/data';
 import { sendManyChatText } from '@/lib/connectors/manychat';
 import type { SocialDmMessage } from '@/lib/schemas';
+import { socialControls } from '@/lib/social-mode';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,6 +19,12 @@ const ReplySchema = z.object({
  * a reply that didn't actually go out.
  */
 export async function POST(request: Request): Promise<Response> {
+  if (socialControls(process.env).mode === 'preview') {
+    return NextResponse.json(
+      { ok: false, error: 'SOCIAL_MODE=preview; external social replies are quarantined.' },
+      { status: 409 },
+    );
+  }
   const parsed = ReplySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: parsed.error.flatten() }, { status: 400 });

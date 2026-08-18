@@ -6,12 +6,14 @@ import { PLATFORM_LABELS, platformDetail, syncFromZernioConfig } from '@/lib/soc
 import type { SocialPlatform } from '@/lib/schemas';
 import { formatFollowers, formatPct, GrowthBadge } from '@/components/SocialStats';
 import { FollowerBarChart } from '@/components/FollowerBarChart';
+import { socialControls } from '@/lib/social-mode';
 
 export const dynamic = 'force-dynamic';
 
 export default function SocialPlatformPage({ params }: { params: { platform: string } }) {
   const db = getDb();
-  syncFromZernioConfig(db);
+  const controls = socialControls(process.env);
+  if (controls.mode === 'production') syncFromZernioConfig(db);
   const detail = platformDetail(db, params.platform as SocialPlatform);
   if (!detail) notFound();
 
@@ -33,7 +35,7 @@ export default function SocialPlatformPage({ params }: { params: { platform: str
           <h1 className="text-[25px] font-bold uppercase leading-[1.1] tracking-[0.06em]">{PLATFORM_LABELS[account.platform]}</h1>
           <p className="mt-1 text-sm text-os-muted">{account.handle}</p>
         </div>
-        {account.url && (
+        {controls.mode === 'production' && account.url && (
           <a
             href={account.url}
             target="_blank"
@@ -46,9 +48,17 @@ export default function SocialPlatformPage({ params }: { params: { platform: str
         )}
       </header>
 
+      {controls.mode === 'preview' && (
+        <div className="mb-6 rounded-lg-t border border-os-border bg-os-surface px-4 py-3 font-mono text-[11px] text-os-muted">
+          Fictional demo analytics · live social connections are not contacted · publishing off
+        </div>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5 ultra:grid-cols-5">
         <div className="rounded-xl border border-os-border bg-os-surface p-5">
-          <div className="text-xs uppercase tracking-wider text-os-muted">Followers</div>
+          <div className="text-xs uppercase tracking-wider text-os-muted">
+            {controls.mode === 'preview' ? 'Demo followers' : 'Followers'}
+          </div>
           <div className="mt-2 text-3xl font-bold tracking-tight">{formatFollowers(followers)}</div>
         </div>
         {(

@@ -2,13 +2,14 @@ import { NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { getDb } from '@/lib/data';
+import { mergeSocialPosts, readPublishReceipts } from '@/lib/publish-receipts';
 import { SocialPlatformSchema, type SocialPost } from '@/lib/schemas';
 
 export const dynamic = 'force-dynamic';
 
-/** The post queue, newest first. */
+/** Planning rows plus checksum-verified publication receipts, newest first. */
 export async function GET() {
-  return NextResponse.json({ posts: getDb().socialPosts.all() });
+  return NextResponse.json({ posts: mergeSocialPosts(getDb().socialPosts.all(), readPublishReceipts()) });
 }
 
 const CreateSchema = z.object({
@@ -19,9 +20,9 @@ const CreateSchema = z.object({
 });
 
 /**
- * Queue a post for the Zernio-publishing agent. This does NOT post live — it
- * persists with status 'queued'; the Social agent on the Agents page picks it
- * up. Wiring an actual Zernio publish is a deliberate later step.
+ * Save a publication plan. This does NOT post live and no background agent
+ * consumes this row. External publishing requires the separately approved,
+ * fail-closed momo-publish workflow; its receipt is exposed by GET.
  */
 export async function POST(request: Request) {
   const parsed = CreateSchema.safeParse(await request.json().catch(() => null));

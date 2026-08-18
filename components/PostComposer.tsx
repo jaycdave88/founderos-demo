@@ -61,7 +61,7 @@ export function PostComposer({ initialPosts }: { initialPosts: SocialPost[] }) {
       setCaption('');
       setMediaUrl('');
       setScheduledFor('');
-      router.refresh(); // refresh the Social agent's queue count elsewhere
+      router.refresh(); // refresh planning and verified-publication counts
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -70,6 +70,8 @@ export function PostComposer({ initialPosts }: { initialPosts: SocialPost[] }) {
   }
 
   const queued = posts.filter((p) => p.status === 'queued');
+  const published = posts.filter((p) => p.status === 'published');
+  const activity = [...published, ...queued];
 
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.7fr)]">
@@ -78,7 +80,7 @@ export function PostComposer({ initialPosts }: { initialPosts: SocialPost[] }) {
         <textarea
           value={caption}
           onChange={(e) => setCaption(e.target.value)}
-          placeholder="Write a caption — this queues for the Zernio publishing agent…"
+          placeholder="Draft a publication plan…"
           rows={4}
           className="w-full resize-none rounded-sm-t border border-os-border bg-os-surface2 px-3 py-2.5 text-[13px] leading-relaxed text-os-text outline-none placeholder:text-os-dim focus:border-os-border-strong"
         />
@@ -123,32 +125,38 @@ export function PostComposer({ initialPosts }: { initialPosts: SocialPost[] }) {
         </div>
         <div className="mt-3 flex items-center justify-between gap-3">
           <span className="font-mono text-[10px] text-os-dim">
-            Queues only — the Social agent publishes on its next run.
+            Planning only — this does not publish. Approved media uses the separate guarded publisher.
           </span>
           <button
             onClick={submit}
             disabled={busy}
             className="flex items-center gap-2 whitespace-nowrap rounded-sm-t border border-os-accent bg-os-accent px-3.5 py-[7px] text-[12.5px] font-semibold text-os-ink transition-all hover:shadow-[var(--glow)] disabled:opacity-45"
           >
-            {busy ? <span className="font-mono text-[11px]">queuing…</span> : <><Send className="h-[13px] w-[13px]" /> Queue post</>}
+            {busy ? <span className="font-mono text-[11px]">saving…</span> : <><Send className="h-[13px] w-[13px]" /> Save plan</>}
           </button>
         </div>
         {error && <p className="mt-2 font-mono text-[11px] text-os-err">{error}</p>}
       </div>
 
-      {/* Queue */}
+      {/* Verified publications and planning rows */}
       <div className="rounded-lg-t border border-os-border bg-os-surface p-1">
         <div className="flex items-center justify-between px-3 py-2.5">
-          <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-os-dim">Queue</span>
-          <span className="font-mono text-[10px] text-os-muted">{queued.length} pending</span>
+          <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-os-dim">Publication ledger</span>
+          <span className="font-mono text-[10px] text-os-muted">{published.length} verified · {queued.length} planned</span>
         </div>
         <div className="flex max-h-[280px] flex-col gap-1 overflow-y-auto px-1 pb-1">
-          {queued.length === 0 && (
-            <p className="px-3 py-6 text-center font-mono text-[10.5px] text-os-dim">nothing queued yet</p>
+          {activity.length === 0 && (
+            <p className="px-3 py-6 text-center font-mono text-[10.5px] text-os-dim">no plans or verified publications yet</p>
           )}
-          {queued.map((post) => (
+          {activity.map((post) => (
             <div key={post.id} className="rounded-sm-t border border-os-border bg-os-surface2 px-3 py-2.5">
-              <p className="line-clamp-2 text-[12px] leading-snug text-os-text">{post.caption}</p>
+              {post.status === 'published' && post.mediaUrl ? (
+                <a href={post.mediaUrl} target="_blank" rel="noreferrer" className="line-clamp-2 text-[12px] leading-snug text-os-text hover:text-os-accent">
+                  {post.caption}
+                </a>
+              ) : (
+                <p className="line-clamp-2 text-[12px] leading-snug text-os-text">{post.caption}</p>
+              )}
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 {post.platforms.map((p) => (
                   <span key={p} className="font-mono text-[9px] uppercase tracking-wider text-os-dim">
@@ -156,8 +164,8 @@ export function PostComposer({ initialPosts }: { initialPosts: SocialPost[] }) {
                   </span>
                 ))}
                 <span className="ml-auto">
-                  <Badge tone={post.scheduledFor ? 'warn' : 'accent'}>
-                    {post.scheduledFor ? fmtWhen(post.scheduledFor) : 'queued'}
+                  <Badge tone={post.status === 'published' ? 'ok' : post.scheduledFor ? 'warn' : 'accent'}>
+                    {post.status === 'published' ? 'verified' : post.scheduledFor ? fmtWhen(post.scheduledFor) : 'planned'}
                   </Badge>
                 </span>
               </div>

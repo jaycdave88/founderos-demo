@@ -358,7 +358,8 @@ export const SocialDmMessageSchema = z.object({
 
 export const SocialPostStatusSchema = z.enum(['queued', 'published', 'failed']);
 
-// A post composed on the Social tab and queued for the Zernio-publishing agent.
+// A planning row composed in FounderOS, or an externally verified publication
+// ingested from the personal stack's immutable publication receipt.
 export const SocialPostSchema = z.object({
   id: z.string().min(1),
   caption: z.string().min(1),
@@ -367,6 +368,10 @@ export const SocialPostSchema = z.object({
   status: SocialPostStatusSchema,
   scheduledFor: z.string().nullable(),
   createdAt: z.string().min(1),
+  companyId: z.string().min(1).nullable().optional(),
+  platformPostId: z.string().min(1).nullable().optional(),
+  renderSha256: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional(),
+  receiptPath: z.string().min(1).nullable().optional(),
 });
 
 export const ContactTagSchema = z.object({

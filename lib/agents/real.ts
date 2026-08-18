@@ -14,6 +14,7 @@ import { whatsappStatus } from '@/lib/connectors/whatsapp';
 import { wisprStatus } from '@/lib/connectors/wispr';
 import { localStackStatus } from '@/lib/connectors/local-stack';
 import { getDb } from '@/lib/data';
+import { readPublishReceipts } from '@/lib/publish-receipts';
 import type { LlmToolSpec } from '@/lib/connectors/llm';
 import type { AgentRunResult, RuntimeAgent } from '@/lib/agents/runtime';
 
@@ -152,21 +153,22 @@ export const realAgents: RuntimeAgent[] = [
   {
     id: 'social-agent',
     name: 'Social Agent',
-    description: 'Aggregates the Zernio publishing and Arcads ad-generation workers.',
+    description: 'Observes Zernio connectivity, verified publication receipts, and Arcads creative generation.',
     departmentId: 'dept-marketing-growth',
     async run() {
       const [zernio, arcads] = await Promise.all([zernioRun(), arcadsRun()]);
       const live = [zernio, arcads].filter((r) => r.ok).length;
       const queued = getDb().socialPosts.queued().length;
-      const queueNote = queued > 0 ? `${queued} post${queued === 1 ? '' : 's'} queued for publish` : 'no posts queued';
+      const published = readPublishReceipts().length;
+      const queueNote = queued > 0 ? `${queued} planning-only post${queued === 1 ? '' : 's'}` : 'no publication plans';
       return {
         ok: live > 0,
-        summary: `${live}/2 core content APIs live · Zernio ${label(zernio)} · Arcads ${label(arcads)} · ${queueNote}`,
-        data: { zernio, arcads, queuedPosts: queued },
+        summary: `${live}/2 core content APIs live · Zernio ${label(zernio)} · Arcads ${label(arcads)} · ${published} verified published · ${queueNote}`,
+        data: { zernio, arcads, verifiedPublications: published, planningPosts: queued },
       };
     },
   },
-  { id: 'zernio-publisher', name: 'Zernio Publisher', description: 'Six platforms under @founderos.ai via Zernio.', departmentId: 'dept-marketing-growth', run: zernioRun },
+  { id: 'zernio-publisher', name: 'Zernio Monitor', description: 'Read-only Zernio connectivity; external publishing is approval-gated in the personal stack.', departmentId: 'dept-marketing-growth', run: zernioRun },
   { id: 'arcads-creative', name: 'Arcads Creative', description: 'UGC ads for Vantage via the Arcads API.', departmentId: 'dept-marketing-growth', run: arcadsRun },
   {
     id: 'remotion-editor',

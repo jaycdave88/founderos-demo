@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Instagram, Linkedin, Mail, Music2, Twitter, Youtube, type LucideIcon } from 'lucide-react';
 import { getDb } from '@/lib/data';
+import { mergeSocialPosts, readPublishReceipts } from '@/lib/publish-receipts';
 import {
   audienceGrowth,
   audienceSeries,
@@ -91,7 +92,7 @@ export default async function SocialPage() {
   await syncBeehiivEmail(db);
   const dash = buildSocialDashboard(db);
   const email = buildEmailList(db);
-  const posts = db.socialPosts.all();
+  const posts = mergeSocialPosts(db.socialPosts.all(), readPublishReceipts());
 
   // Real published posts straight from Zernio/Late. Engagement (likes/views) is
   // behind Late's paid analytics add-on, so live posts show the post link in its
@@ -102,6 +103,7 @@ export default async function SocialPage() {
 
   const total = audienceTotal(db);
   const queued = posts.filter((p) => p.status === 'queued').length;
+  const published = posts.filter((p) => p.status === 'published').length;
   const dmInbox = dmThreads(db); // Instagram DM inbox (seeded → live via ManyChat webhook)
 
   // Combined-audience series + REAL per-platform posting history (from Zernio/
@@ -295,9 +297,9 @@ export default async function SocialPage() {
         </div>
       </section>
 
-      {/* Publish — compose a post that queues for the Social agent */}
+      {/* Publication control — planning is separate from verified delivery. */}
       <section className="mt-10">
-        <SectionHead label="Publish" count={`${queued} queued`} link="Social agent" href="/agents" />
+        <SectionHead label="Publication control" count={`${published} verified · ${queued} planned`} link="Social agent" href="/agents" />
         <PostComposer initialPosts={posts} />
       </section>
     </div>

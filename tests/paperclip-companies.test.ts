@@ -47,11 +47,15 @@ function paperclipFetch() {
         { id: 'issue-b1', status: 'in_progress', assigneeAgentId: 'agent-b1' },
         { id: 'issue-b2', status: 'blocked', assigneeAgentId: 'agent-b2' },
         { id: 'issue-b3', status: 'backlog', assigneeAgentId: null },
+        { id: 'issue-b4', status: 'in_review', assigneeAgentId: null },
+        { id: 'issue-b5', status: 'todo', assigneeAgentId: null, assigneeUserId: 'founder' },
       ]);
     }
     if (path === '/api/issues/issue-b1/documents') return json([]);
     if (path === '/api/issues/issue-b2/documents') return json([]);
     if (path === '/api/issues/issue-b3/documents') return json([]);
+    if (path === '/api/issues/issue-b4/documents') return json([]);
+    if (path === '/api/issues/issue-b5/documents') return json([]);
     if (path === '/api/companies/company-b/issues' && init?.method === 'POST') return json({}, 201);
     return json({ error: `unexpected ${init?.method ?? 'GET'} ${path}` }, 404);
   });
@@ -90,8 +94,8 @@ describe('Paperclip company portfolio', () => {
         id: 'company-b',
         name: 'Beta',
         agentCount: 2,
-        issueCount: 3,
-        openIssueCount: 3,
+        issueCount: 5,
+        openIssueCount: 5,
         blockedIssueCount: 1,
         unassignedOpenIssueCount: 1,
       }),
@@ -108,6 +112,11 @@ describe('Paperclip company portfolio', () => {
     expect(snapshot.companyId).toBe('company-b');
     expect(snapshot.companyName).toBe('Beta');
     expect(snapshot.agents).toHaveLength(2);
+    expect(snapshot.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'issue-b5', assigneeUserId: 'founder' }),
+      ]),
+    );
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/company-a/'))).toBe(false);
   });
 
@@ -130,13 +139,13 @@ describe('Paperclip company portfolio', () => {
 
     const selected = await GET(new Request('http://localhost/api/paperclip?companyId=company-b'));
     expect(selected.status).toBe(200);
-    expect(await selected.json()).toMatchObject({ companyId: 'company-b', counts: { agents: 2, issues: 3 } });
+    expect(await selected.json()).toMatchObject({ companyId: 'company-b', counts: { agents: 2, issues: 5 } });
 
     const portfolio = await GET(new Request('http://localhost/api/paperclip?view=portfolio'));
     expect(portfolio.status).toBe(200);
     expect(await portfolio.json()).toMatchObject({
       ok: true,
-      counts: { companies: 2, agents: 3, openIssues: 3, blockedIssues: 1, unassignedOpenIssues: 1 },
+      counts: { companies: 2, agents: 3, openIssues: 5, blockedIssues: 1, unassignedOpenIssues: 1 },
     });
   });
 });

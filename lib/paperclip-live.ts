@@ -82,6 +82,7 @@ export type PaperclipIssue = {
   title?: string;
   status?: string;
   assigneeAgentId?: string | null;
+  assigneeUserId?: string | null;
   updatedAt?: string | null;
 };
 
@@ -216,6 +217,7 @@ function toIssue(raw: unknown): PaperclipIssue | null {
     title: str(o.title),
     status: str(o.status),
     assigneeAgentId: str(o.assigneeAgentId) ?? null,
+    assigneeUserId: str(o.assigneeUserId) ?? null,
     updatedAt: str(o.updatedAt) ?? null,
   };
 }
@@ -375,7 +377,14 @@ export async function getPaperclipPortfolio(): Promise<PaperclipPortfolio> {
       issueCount: snapshot.issues.length,
       openIssueCount: open.length,
       blockedIssueCount: open.filter((issue) => issue.status === 'blocked').length,
-      unassignedOpenIssueCount: open.filter((issue) => !issue.assigneeAgentId).length,
+      // Founder review is a deliberate queue, not abandoned agent work. A
+      // human assignee is also an owner even when assigneeAgentId is null.
+      unassignedOpenIssueCount: open.filter(
+        (issue) =>
+          issue.status !== 'in_review' &&
+          !issue.assigneeAgentId &&
+          !issue.assigneeUserId,
+      ).length,
       errors: snapshot.errors,
     };
   });

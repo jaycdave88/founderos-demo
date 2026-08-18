@@ -136,7 +136,7 @@ export default async function PaperclipPage(props: {
                 <div style={{ color: attention > 0 ? '#f87171' : '#22c55e', fontSize: 11, marginTop: 4 }}>
                   {company.ok
                     ? attention > 0
-                      ? `${company.blockedIssueCount} blocked · ${company.unassignedOpenIssueCount} unassigned`
+                      ? `${company.blockedIssueCount} blocked · ${company.unassignedOpenIssueCount} needs owner`
                       : 'no delivery blockers'
                     : 'company read failed'}
                 </div>
@@ -252,7 +252,11 @@ export default async function PaperclipPage(props: {
                     <span style={{ color: '#525252' }}>
                       {issue.assigneeAgentId
                         ? `→ ${nameOf.get(issue.assigneeAgentId) ?? 'unknown agent'}`
-                        : '→ unassigned'}
+                        : issue.assigneeUserId
+                          ? '→ human owner'
+                          : issue.status === 'in_review'
+                            ? '→ founder review'
+                            : '→ unassigned'}
                     </span>
                     {docs.length > 0 && (
                       <span style={{ color: '#22c55e', marginLeft: 8, fontSize: 11 }}>

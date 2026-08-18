@@ -81,6 +81,7 @@ export type PaperclipIssue = {
   identifier?: string;
   title?: string;
   status?: string;
+  parentId?: string | null;
   assigneeAgentId?: string | null;
   assigneeUserId?: string | null;
   updatedAt?: string | null;
@@ -216,6 +217,7 @@ function toIssue(raw: unknown): PaperclipIssue | null {
     identifier: str(o.identifier),
     title: str(o.title),
     status: str(o.status),
+    parentId: str(o.parentId) ?? null,
     assigneeAgentId: str(o.assigneeAgentId) ?? null,
     assigneeUserId: str(o.assigneeUserId) ?? null,
     updatedAt: str(o.updatedAt) ?? null,
@@ -287,7 +289,12 @@ export async function getPaperclipOrg(explicitCompanyId?: string): Promise<Paper
 
 export async function getPaperclipSnapshot(
   explicitCompanyId?: string,
-  options: { includeDocuments?: boolean } = {},
+  options: {
+    includeDocuments?: boolean;
+    documentStatuses?: string[];
+    topLevelOnly?: boolean;
+    documentLimit?: number;
+  } = {},
 ): Promise<PaperclipSnapshot> {
   const errors: string[] = [];
   const cid = selectedCompanyId(explicitCompanyId);
@@ -333,7 +340,16 @@ export async function getPaperclipSnapshot(
   // the board rather than making the reader click through. One request per
   // issue, in parallel, capped — a company with hundreds of issues should not
   // turn one page load into hundreds of round trips.
-  const withDocs = options.includeDocuments === false ? [] : issues.slice(0, 40);
+  let documentIssues = issues;
+  if (options.documentStatuses?.length) {
+    const statuses = new Set(options.documentStatuses);
+    documentIssues = documentIssues.filter((issue) => statuses.has(issue.status ?? ''));
+  }
+  if (options.topLevelOnly) {
+    documentIssues = documentIssues.filter((issue) => !issue.parentId);
+  }
+  const documentLimit = Math.max(0, Math.min(options.documentLimit ?? 40, 500));
+  const withDocs = options.includeDocuments === false ? [] : documentIssues.slice(0, documentLimit);
   const docLists = await Promise.all(
     withDocs.map(async (issue) => {
       const raw = await getJson(`/api/issues/${issue.id}/documents`, []);

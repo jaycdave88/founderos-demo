@@ -7,6 +7,7 @@
  * surrounding app does with CSS.
  */
 import type { CSSProperties } from 'react';
+import { runtimeEnv } from '@/lib/creds';
 import {
   getPaperclipPortfolio,
   getPaperclipSnapshot,
@@ -78,6 +79,13 @@ export default async function PaperclipPage(props: {
     requested ??
     configured;
   const snap = await getPaperclipSnapshot(selectedCompanyId);
+  const env = runtimeEnv();
+  const notionCompanyIds = new Set(
+    (env.NOTION_DRAFT_COMPANY_IDS ?? '').split(',').map((id) => id.trim()).filter(Boolean),
+  );
+  const notionUrl = env.NOTION_DRAFT_DATABASE_URL?.trim() ?? '';
+  const notionEnabled = env.NOTION_DRAFT_SYNC_ENABLED === '1';
+  const notionIncludesCompany = notionCompanyIds.has(snap.companyId);
 
   const byStatus = new Map<string, PaperclipIssue[]>();
   for (const issue of snap.issues) {
@@ -149,6 +157,36 @@ export default async function PaperclipPage(props: {
             </div>
           )}
         </div>
+      </div>
+
+      <div
+        style={{
+          ...card,
+          marginBottom: 22,
+          borderColor: notionEnabled && notionIncludesCompany ? '#22543d' : '#3f3f46',
+        }}
+      >
+        <div style={{ color: '#7a7a7a', fontSize: 11, letterSpacing: '0.08em', marginBottom: 8 }}>
+          NOTION DRAFT REVIEW
+        </div>
+        <div style={{ color: '#d4d4d4', fontSize: 12, lineHeight: 1.6 }}>
+          {notionEnabled && notionIncludesCompany
+            ? 'Top-level in_review issues with a `draft` document sync one-way for human review.'
+            : 'This company is not enabled for Notion draft export.'}
+        </div>
+        <div style={{ color: '#7a7a7a', fontSize: 11, lineHeight: 1.6, marginTop: 4 }}>
+          Paperclip remains the source of truth. Notion edits never assign, close, or publish work.
+        </div>
+        {notionUrl && (
+          <a
+            href={notionUrl}
+            target="_blank"
+            rel="noreferrer"
+            style={{ color: '#86efac', fontSize: 12, display: 'inline-block', marginTop: 8 }}
+          >
+            Open the Notion review library ↗
+          </a>
+        )}
       </div>
 
       {snap.errors.length > 0 && (

@@ -36,6 +36,7 @@ const ROUTES: RouteEntry[] = [
   { route: 'keys', load: () => import('@/app/api/keys/route'), url: 'http://localhost/api/keys' },
   { route: 'life/map', load: () => import('@/app/api/life/map/route'), url: 'http://localhost/api/life/map' },
   { route: 'metrics', load: () => import('@/app/api/metrics/route'), url: 'http://localhost/api/metrics' },
+  { route: 'notion/drafts', load: () => import('@/app/api/notion/drafts/route'), url: 'http://localhost/api/notion/drafts' },
   { route: 'paperclip', load: () => import('@/app/api/paperclip/route'), url: 'http://localhost/api/paperclip' },
   { route: 'roadmap', load: () => import('@/app/api/roadmap/route'), url: 'http://localhost/api/roadmap' },
   { route: 'social', load: () => import('@/app/api/social/route'), url: 'http://localhost/api/social' },

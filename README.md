@@ -90,6 +90,29 @@ change, not a rewrite.
 New data means a new repo method, a Zod schema, a seed entry, and a test. Keep
 it that way.
 
+### Notion draft review library
+
+`POST /api/notion/drafts` is the guarded write adapter used by
+personal-ai-stack. It is deliberately not another task system: Paperclip owns
+assignment, status, documents, and employee execution. The adapter accepts only
+an explicit company allowlist and copies a draft when the canonical top-level
+issue is `in_review` and has a non-empty document keyed exactly `draft`.
+
+The database is optimized for a human reader: review state, current revision,
+company, Paperclip issue, assigned-employee tag, missing-owner warning, source and
+sync timestamps, word/VERIFY counts, immutable revision/checksum, source link,
+and the complete Markdown draft. Changed drafts create a new current page and
+mark the prior page `Superseded`; retries with the same checksum do nothing.
+If Paperclip ownership is corrected without changing the draft, the existing
+page's employee tag and missing-owner warning refresh without overwriting its
+human review state or comments. Notion edits never flow back, close an issue,
+or authorize publication.
+
+The local route requires `NOTION_DRAFT_SYNC_TOKEN` for every write, refuses an
+unscoped company list, validates the database schema, and serializes syncs.
+Use `scripts/85-notion.sh --setup` in personal-ai-stack to create and configure
+the database; do not hand-copy the generated worker token.
+
 ---
 
 ## Knowledge layer: G-Brain and Optimal Engine

@@ -25,7 +25,9 @@ export async function notionStatus(env: Record<string, string | undefined> = pro
       name: 'Notion',
       kind: 'notion',
       state: 'connected',
-      detail: `Connected as ${me.name ?? 'integration'}`,
+      detail: env.NOTION_DRAFT_DATA_SOURCE_ID
+        ? `Connected as ${me.name ?? 'integration'} · Paperclip draft review configured`
+        : `Connected as ${me.name ?? 'integration'} · draft review not configured`,
     };
   } catch (err) {
     return {

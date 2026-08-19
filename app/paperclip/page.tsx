@@ -152,7 +152,12 @@ export default async function PaperclipPage(props: {
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           {portfolio.companies.map((company) => {
             const selected = company.id === snap.companyId;
-            const attention = company.blockedIssueCount + company.unassignedOpenIssueCount;
+            const unresolvedBlocked = Math.max(
+              0,
+              company.blockedIssueCount - company.recoveringIssueCount,
+            );
+            const attention = unresolvedBlocked + company.unassignedOpenIssueCount;
+            const recoveryActive = company.recoveringIssueCount > 0;
             return (
               <a
                 key={company.id}
@@ -161,7 +166,7 @@ export default async function PaperclipPage(props: {
                   display: 'block',
                   minWidth: 210,
                   padding: '10px 12px',
-                  border: `1px solid ${selected ? '#22c55e' : attention > 0 ? '#7f1d1d' : '#262626'}`,
+                  border: `1px solid ${selected ? '#22c55e' : attention > 0 ? '#7f1d1d' : recoveryActive ? '#854d0e' : '#262626'}`,
                   borderRadius: 4,
                   color: '#e5e5e5',
                   background: selected ? '#0d1f14' : '#080808',
@@ -175,11 +180,13 @@ export default async function PaperclipPage(props: {
                 <div style={{ color: company.reviewIssueCount >= reviewCap ? '#f87171' : '#c4b5fd', fontSize: 11, marginTop: 4 }}>
                   {company.reviewIssueCount} / {reviewCap} awaiting review
                 </div>
-                <div style={{ color: attention > 0 ? '#f87171' : '#22c55e', fontSize: 11, marginTop: 4 }}>
+                <div style={{ color: attention > 0 ? '#f87171' : recoveryActive ? '#fbbf24' : '#22c55e', fontSize: 11, marginTop: 4 }}>
                   {company.ok
                     ? attention > 0
-                      ? `${company.blockedIssueCount} blocked · ${company.unassignedOpenIssueCount} needs owner`
-                      : 'no delivery blockers'
+                      ? `${unresolvedBlocked} blocked · ${company.unassignedOpenIssueCount} needs owner${recoveryActive ? ` · ${company.recoveringIssueCount} recovering` : ''}`
+                      : recoveryActive
+                        ? `${company.recoveringIssueCount} recovering automatically · no founder action`
+                        : 'no delivery blockers'
                     : 'company read failed'}
                 </div>
               </a>
@@ -479,7 +486,32 @@ export default async function PaperclipPage(props: {
                         {docs.map((d) => d.key).join(' · ')}
                       </span>
                     )}
+                    {issue.status === 'blocked' && issue.activeRecoveryAction?.status === 'active' && (
+                      <span style={{ color: '#fbbf24', marginLeft: 8, fontSize: 11 }}>
+                        recovering automatically
+                      </span>
+                    )}
                   </summary>
+
+                  {issue.status === 'blocked' && issue.activeRecoveryAction?.status === 'active' && (
+                    <div
+                      style={{
+                        color: '#fbbf24',
+                        background: '#171006',
+                        border: '1px solid #854d0e',
+                        borderRadius: 4,
+                        padding: '8px 10px',
+                        margin: '8px 0',
+                        fontSize: 11,
+                        lineHeight: 1.6,
+                      }}
+                    >
+                      Self-healing is active{issue.activeRecoveryAction.cause ? ` · ${issue.activeRecoveryAction.cause}` : ''}.
+                      {issue.activeRecoveryAction.nextAction
+                        ? ` Next action: ${issue.activeRecoveryAction.nextAction}`
+                        : ' No founder action is currently required.'}
+                    </div>
+                  )}
 
                   {docs.map((doc) => (
                     <div key={doc.key} style={{ margin: '10px 0 4px' }}>

@@ -41,6 +41,10 @@ export async function GET(request: Request) {
           (total, company) => total + company.blockedIssueCount,
           0,
         ),
+        recoveringIssues: portfolio.companies.reduce(
+          (total, company) => total + company.recoveringIssueCount,
+          0,
+        ),
         unassignedOpenIssues: portfolio.companies.reduce(
           (total, company) => total + company.unassignedOpenIssueCount,
           0,

@@ -34,6 +34,7 @@ export type PaperclipCompanySummary = PaperclipCompany & {
   openIssueCount: number;
   reviewIssueCount: number;
   blockedIssueCount: number;
+  recoveringIssueCount: number;
   unassignedOpenIssueCount: number;
   errors: string[];
 };
@@ -87,7 +88,18 @@ export type PaperclipIssue = {
   assigneeAgentId?: string | null;
   assigneeUserId?: string | null;
   executionState?: PaperclipExecutionState | null;
+  activeRecoveryAction?: PaperclipRecoveryAction | null;
   updatedAt?: string | null;
+};
+
+export type PaperclipRecoveryAction = {
+  id?: string;
+  status?: string;
+  ownerType?: string;
+  ownerAgentId?: string | null;
+  ownerUserId?: string | null;
+  cause?: string;
+  nextAction?: string | null;
 };
 
 export type PaperclipExecutionParticipant = {
@@ -264,7 +276,22 @@ function toIssue(raw: unknown): PaperclipIssue | null {
     assigneeAgentId: str(o.assigneeAgentId) ?? null,
     assigneeUserId: str(o.assigneeUserId) ?? null,
     executionState: toExecutionState(o.executionState),
+    activeRecoveryAction: toRecoveryAction(o.activeRecoveryAction),
     updatedAt: str(o.updatedAt) ?? null,
+  };
+}
+
+function toRecoveryAction(raw: unknown): PaperclipRecoveryAction | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  return {
+    id: str(o.id),
+    status: str(o.status),
+    ownerType: str(o.ownerType),
+    ownerAgentId: str(o.ownerAgentId) ?? null,
+    ownerUserId: str(o.ownerUserId) ?? null,
+    cause: str(o.cause),
+    nextAction: str(o.nextAction) ?? null,
   };
 }
 
@@ -461,6 +488,10 @@ export async function getPaperclipPortfolio(): Promise<PaperclipPortfolio> {
       openIssueCount: open.length,
       reviewIssueCount: open.filter(isFounderReviewIssue).length,
       blockedIssueCount: open.filter((issue) => issue.status === 'blocked').length,
+      recoveringIssueCount: open.filter(
+        (issue) =>
+          issue.status === 'blocked' && issue.activeRecoveryAction?.status === 'active',
+      ).length,
       // Founder review is a deliberate queue, not abandoned agent work. A
       // human assignee is also an owner even when assigneeAgentId is null.
       unassignedOpenIssueCount: open.filter(

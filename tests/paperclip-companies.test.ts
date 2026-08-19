@@ -45,7 +45,19 @@ function paperclipFetch() {
     if (path === '/api/companies/company-b/issues?view=compact') {
       return json([
         { id: 'issue-b1', status: 'in_progress', assigneeAgentId: 'agent-b1' },
-        { id: 'issue-b2', status: 'blocked', assigneeAgentId: 'agent-b2' },
+        {
+          id: 'issue-b2',
+          status: 'blocked',
+          assigneeAgentId: 'agent-b2',
+          activeRecoveryAction: {
+            id: 'recovery-b2',
+            status: 'active',
+            ownerType: 'agent',
+            ownerAgentId: 'agent-b2',
+            cause: 'successful_run_missing_state',
+            nextAction: 'Record a valid disposition.',
+          },
+        },
         { id: 'issue-b3', status: 'backlog', assigneeAgentId: null },
         { id: 'issue-b4', status: 'in_review', assigneeAgentId: null },
         { id: 'issue-b5', status: 'todo', assigneeAgentId: null, assigneeUserId: 'founder' },
@@ -101,6 +113,7 @@ describe('Paperclip company portfolio', () => {
         openIssueCount: 0,
         reviewIssueCount: 0,
         blockedIssueCount: 0,
+        recoveringIssueCount: 0,
         unassignedOpenIssueCount: 0,
       }),
       expect.objectContaining({
@@ -111,6 +124,7 @@ describe('Paperclip company portfolio', () => {
         openIssueCount: 7,
         reviewIssueCount: 1,
         blockedIssueCount: 1,
+        recoveringIssueCount: 1,
         unassignedOpenIssueCount: 1,
       }),
     ]);
@@ -129,6 +143,13 @@ describe('Paperclip company portfolio', () => {
     expect(snapshot.issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: 'issue-b5', assigneeUserId: 'founder' }),
+        expect.objectContaining({
+          id: 'issue-b2',
+          activeRecoveryAction: expect.objectContaining({
+            status: 'active',
+            cause: 'successful_run_missing_state',
+          }),
+        }),
       ]),
     );
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/company-a/'))).toBe(false);
@@ -165,6 +186,7 @@ describe('Paperclip company portfolio', () => {
         openIssues: 7,
         reviewIssues: 1,
         blockedIssues: 1,
+        recoveringIssues: 1,
         unassignedOpenIssues: 1,
       },
     });

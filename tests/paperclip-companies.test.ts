@@ -87,6 +87,7 @@ describe('Paperclip company portfolio', () => {
         agentCount: 1,
         issueCount: 1,
         openIssueCount: 0,
+        reviewIssueCount: 0,
         blockedIssueCount: 0,
         unassignedOpenIssueCount: 0,
       }),
@@ -96,6 +97,7 @@ describe('Paperclip company portfolio', () => {
         agentCount: 2,
         issueCount: 5,
         openIssueCount: 5,
+        reviewIssueCount: 1,
         blockedIssueCount: 1,
         unassignedOpenIssueCount: 1,
       }),
@@ -145,7 +147,14 @@ describe('Paperclip company portfolio', () => {
     expect(portfolio.status).toBe(200);
     expect(await portfolio.json()).toMatchObject({
       ok: true,
-      counts: { companies: 2, agents: 3, openIssues: 5, blockedIssues: 1, unassignedOpenIssues: 1 },
+      counts: {
+        companies: 2,
+        agents: 3,
+        openIssues: 5,
+        reviewIssues: 1,
+        blockedIssues: 1,
+        unassignedOpenIssues: 1,
+      },
     });
   });
 });

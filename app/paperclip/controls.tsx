@@ -179,3 +179,150 @@ export function CommentBox({ issueId }: { issueId: string }) {
     </div>
   );
 }
+
+type ReviewDocument = {
+  key: string;
+  latestRevisionNumber: number | null;
+};
+
+type ReviewMode = 'approve' | 'request_changes' | 'cancel';
+
+export function ReviewDecision({
+  companyId,
+  issueId,
+  documents,
+}: {
+  companyId: string;
+  issueId: string;
+  documents: ReviewDocument[];
+}) {
+  const { busy, note: result, send } = useAction();
+  const [mode, setMode] = useState<ReviewMode | null>(null);
+  const [note, setNote] = useState('');
+  const requiresNote = mode === 'request_changes' || mode === 'cancel';
+  const canConfirm = mode !== null && (!requiresNote || note.trim().length > 0);
+  const documentLabel =
+    documents.length > 0
+      ? documents
+          .map((document) => `${document.key}@rev ${document.latestRevisionNumber ?? 'unknown'}`)
+          .join(', ')
+      : 'no deliverable documents';
+
+  async function confirm() {
+    if (!mode || !canConfirm) return;
+    await send({
+      action: 'review_decision',
+      companyId,
+      issueId,
+      decision: mode,
+      note,
+      expectedDocuments: JSON.stringify(documents),
+    });
+  }
+
+  return (
+    <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #262626' }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button
+          style={{
+            ...button,
+            borderColor: '#166534',
+            color: '#86efac',
+            opacity: busy || documents.length === 0 ? 0.45 : 1,
+          }}
+          disabled={busy || documents.length === 0}
+          onClick={() => {
+            setMode('approve');
+            setNote('');
+          }}
+          title={documents.length === 0 ? 'Approval requires a deliverable document.' : undefined}
+        >
+          Review &amp; approve
+        </button>
+        <button
+          style={{ ...button, borderColor: '#854d0e', color: '#fde047', opacity: busy ? 0.45 : 1 }}
+          disabled={busy}
+          onClick={() => {
+            setMode('request_changes');
+            setNote('');
+          }}
+        >
+          Request changes
+        </button>
+        <button
+          style={{ ...button, borderColor: '#7f1d1d', color: '#fca5a5', opacity: busy ? 0.45 : 1 }}
+          disabled={busy}
+          onClick={() => {
+            setMode('cancel');
+            setNote('');
+          }}
+        >
+          Cancel obsolete
+        </button>
+      </div>
+
+      {mode && (
+        <div
+          style={{
+            marginTop: 10,
+            padding: 12,
+            background: '#080808',
+            border: '1px solid #303030',
+            borderRadius: 4,
+          }}
+        >
+          <div style={{ color: '#d4d4d4', fontSize: 12, lineHeight: 1.6 }}>
+            {mode === 'approve'
+              ? `Confirm that you read and approve ${documentLabel}. This closes the issue; it does not publish anything.`
+              : mode === 'request_changes'
+                ? `Describe the exact changes needed. The issue returns to in_progress so the team can revise it.`
+                : `Explain why this review is obsolete. The issue will be cancelled and removed from the review cap.`}
+          </div>
+          <textarea
+            style={{ ...input, minHeight: 64, resize: 'vertical', marginTop: 8 }}
+            placeholder={
+              mode === 'approve'
+                ? 'Optional approval note…'
+                : mode === 'request_changes'
+                  ? 'Required: what should change?'
+                  : 'Required: why is this obsolete?'
+            }
+            value={note}
+            maxLength={2000}
+            onChange={(event) => setNote(event.target.value)}
+          />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              style={{ ...button, opacity: busy || !canConfirm ? 0.45 : 1 }}
+              disabled={busy || !canConfirm}
+              onClick={confirm}
+            >
+              {busy
+                ? 'saving…'
+                : mode === 'approve'
+                  ? 'Confirm approval'
+                  : mode === 'request_changes'
+                    ? 'Send back to team'
+                    : 'Confirm cancellation'}
+            </button>
+            <button
+              style={{ ...button, opacity: busy ? 0.45 : 1 }}
+              disabled={busy}
+              onClick={() => {
+                setMode(null);
+                setNote('');
+              }}
+            >
+              Keep reviewing
+            </button>
+            {result && (
+              <span style={{ color: result === 'done' ? '#22c55e' : '#f87171', fontSize: 12 }}>
+                {result}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

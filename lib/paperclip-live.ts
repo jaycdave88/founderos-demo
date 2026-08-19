@@ -32,6 +32,7 @@ export type PaperclipCompanySummary = PaperclipCompany & {
   agentCount: number;
   issueCount: number;
   openIssueCount: number;
+  reviewIssueCount: number;
   blockedIssueCount: number;
   unassignedOpenIssueCount: number;
   errors: string[];
@@ -292,6 +293,7 @@ export async function getPaperclipSnapshot(
   options: {
     includeDocuments?: boolean;
     documentStatuses?: string[];
+    prioritizeDocumentStatuses?: string[];
     topLevelOnly?: boolean;
     documentLimit?: number;
   } = {},
@@ -348,6 +350,13 @@ export async function getPaperclipSnapshot(
   if (options.topLevelOnly) {
     documentIssues = documentIssues.filter((issue) => !issue.parentId);
   }
+  if (options.prioritizeDocumentStatuses?.length) {
+    const priority = new Set(options.prioritizeDocumentStatuses);
+    documentIssues = [
+      ...documentIssues.filter((issue) => priority.has(issue.status ?? '')),
+      ...documentIssues.filter((issue) => !priority.has(issue.status ?? '')),
+    ];
+  }
   const documentLimit = Math.max(0, Math.min(options.documentLimit ?? 40, 500));
   const withDocs = options.includeDocuments === false ? [] : documentIssues.slice(0, documentLimit);
   const docLists = await Promise.all(
@@ -392,6 +401,7 @@ export async function getPaperclipPortfolio(): Promise<PaperclipPortfolio> {
       agentCount: snapshot.agents.length,
       issueCount: snapshot.issues.length,
       openIssueCount: open.length,
+      reviewIssueCount: open.filter((issue) => issue.status === 'in_review').length,
       blockedIssueCount: open.filter((issue) => issue.status === 'blocked').length,
       // Founder review is a deliberate queue, not abandoned agent work. A
       // human assignee is also an owner even when assigneeAgentId is null.
@@ -425,6 +435,13 @@ export async function getPaperclipPortfolio(): Promise<PaperclipPortfolio> {
  */
 
 export type WriteResult = { ok: boolean; detail: string };
+
+export type ReviewDecision = 'approve' | 'request_changes' | 'cancel';
+
+export type ReviewRevision = {
+  key: string;
+  latestRevisionNumber: number | null;
+};
 
 async function send(method: 'POST' | 'PATCH', path: string, payload: unknown): Promise<WriteResult> {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -492,6 +509,88 @@ export async function setIssueStatus(issueId: string, status: string): Promise<W
     return { ok: false, detail: `unknown status "${status}" — Paperclip takes ${ISSUE_STATUSES.join(', ')}` };
   }
   return send('PATCH', `/api/issues/${issueId}`, { status });
+}
+
+function revisionToken(documents: ReviewRevision[]): string {
+  return documents
+    .map((document) => `${document.key}@${document.latestRevisionNumber ?? 'none'}`)
+    .sort()
+    .join('|');
+}
+
+/**
+ * Record a founder's review decision without separating the decision comment
+ * from the state transition. Paperclip's review policy evaluates both fields
+ * in the same PATCH, and this also leaves one auditable event instead of two
+ * writes that can race or only half-succeed.
+ *
+ * The company membership, current status and document revisions are re-read
+ * immediately before the PATCH. A stale browser tab therefore cannot approve
+ * a revision it did not display.
+ */
+export async function decideReview(input: {
+  companyId: string;
+  issueId: string;
+  decision: ReviewDecision;
+  note?: string;
+  expectedDocuments: ReviewRevision[];
+}): Promise<WriteResult> {
+  const cid = selectedCompanyId(input.companyId);
+  if (!cid) return { ok: false, detail: 'a valid companyId is required' };
+  if (!input.issueId.trim()) return { ok: false, detail: 'issueId is required' };
+  if (!['approve', 'request_changes', 'cancel'].includes(input.decision)) {
+    return { ok: false, detail: `unknown review decision "${input.decision}"` };
+  }
+
+  const note = input.note?.trim() ?? '';
+  if ((input.decision === 'request_changes' || input.decision === 'cancel') && !note) {
+    return {
+      ok: false,
+      detail: input.decision === 'cancel' ? 'a cancellation reason is required' : 'requested changes are required',
+    };
+  }
+  if (note.length > 2000) return { ok: false, detail: 'review note must be 2000 characters or fewer' };
+
+  const errors: string[] = [];
+  const issuesRaw = await getJson(`/api/companies/${cid}/issues?view=compact`, errors);
+  if (issuesRaw === null) return { ok: false, detail: errors.join(' · ') || 'could not read company issues' };
+  const issue = asArray(issuesRaw)
+    .map(toIssue)
+    .find((candidate) => candidate?.id === input.issueId);
+  if (!issue) return { ok: false, detail: 'issue does not belong to the selected company' };
+  if (issue.status !== 'in_review') {
+    return { ok: false, detail: `review is stale: issue is ${issue.status ?? 'unknown'}, not in_review` };
+  }
+
+  const documentsRaw = await getJson(`/api/issues/${input.issueId}/documents`, errors);
+  if (documentsRaw === null) return { ok: false, detail: errors.join(' · ') || 'could not read issue documents' };
+  const currentDocuments = asArray(documentsRaw)
+    .map(toDocument)
+    .filter((document): document is PaperclipDocument => document !== null)
+    .map(({ key, latestRevisionNumber }) => ({ key, latestRevisionNumber }));
+
+  if (revisionToken(currentDocuments) !== revisionToken(input.expectedDocuments)) {
+    return { ok: false, detail: 'review is stale: the deliverables changed; refresh and read the latest revision' };
+  }
+  if (input.decision === 'approve' && currentDocuments.length === 0) {
+    return { ok: false, detail: 'cannot approve an issue with no deliverable document' };
+  }
+
+  const reviewed = currentDocuments.length > 0
+    ? currentDocuments
+        .map((document) => `${document.key}@rev ${document.latestRevisionNumber ?? 'unknown'}`)
+        .sort()
+        .join(', ')
+    : 'no documents';
+  const suffix = note ? ` Note: ${note}` : '';
+  const transition =
+    input.decision === 'approve'
+      ? { status: 'done', comment: `Founder approved in FounderOS. Reviewed: ${reviewed}.${suffix}` }
+      : input.decision === 'request_changes'
+        ? { status: 'in_progress', comment: `Founder requested changes in FounderOS. Reviewed: ${reviewed}. Changes: ${note}` }
+        : { status: 'cancelled', comment: `Founder cancelled obsolete review work in FounderOS. Reviewed: ${reviewed}. Reason: ${note}` };
+
+  return send('PATCH', `/api/issues/${input.issueId}`, transition);
 }
 
 /**

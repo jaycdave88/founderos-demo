@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { ISSUE_STATUSES, isIssueStatus, setIssueStatus } from '@/lib/paperclip-live';
+import {
+  ISSUE_STATUSES,
+  decideReview,
+  isIssueStatus,
+  setIssueStatus,
+} from '@/lib/paperclip-live';
 import { LANES, NO_DROP } from '@/app/tasks/board';
 import { POST } from '@/app/api/paperclip/route';
 
@@ -101,6 +106,139 @@ describe('POST /api/paperclip set_status', () => {
     const res = await POST(request({ action: 'set_status', issueId: 'issue-1', status: 'todo' }));
     expect(res.status).toBe(502);
     expect((await res.json()).detail).toContain('nope');
+  });
+});
+
+function reviewFetch(options: {
+  status?: string;
+  documents?: Array<{ key: string; body?: string; latestRevisionNumber: number | null }>;
+} = {}) {
+  const status = options.status ?? 'in_review';
+  const documents = options.documents ?? [
+    { key: 'draft', body: '# Current draft', latestRevisionNumber: 2 },
+  ];
+  return vi.fn(async (url: string, init?: RequestInit) => {
+    const path = new URL(url).pathname + new URL(url).search;
+    if (path === '/api/companies/company-1/issues?view=compact') {
+      return new Response(JSON.stringify([{ id: 'issue-1', status }]), { status: 200 });
+    }
+    if (path === '/api/issues/issue-1/documents') {
+      return new Response(JSON.stringify(documents), { status: 200 });
+    }
+    if (path === '/api/issues/issue-1' && init?.method === 'PATCH') {
+      return new Response('{}', { status: 200 });
+    }
+    return new Response('not found', { status: 404 });
+  });
+}
+
+describe('founder review decisions', () => {
+  test('approval re-reads the exact revision then atomically records status and decision', async () => {
+    const fetchMock = reviewFetch();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await decideReview({
+      companyId: 'company-1',
+      issueId: 'issue-1',
+      decision: 'approve',
+      note: 'Strong enough to use.',
+      expectedDocuments: [{ key: 'draft', latestRevisionNumber: 2 }],
+    });
+
+    expect(result.ok).toBe(true);
+    const patch = fetchMock.mock.calls.find(([, init]) => init?.method === 'PATCH');
+    expect(patch).toBeDefined();
+    expect(JSON.parse(String(patch?.[1]?.body))).toEqual({
+      status: 'done',
+      comment:
+        'Founder approved in FounderOS. Reviewed: draft@rev 2. Note: Strong enough to use.',
+    });
+  });
+
+  test('a stale browser revision is rejected before any write', async () => {
+    const fetchMock = reviewFetch({
+      documents: [{ key: 'draft', body: '# Newer draft', latestRevisionNumber: 3 }],
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await decideReview({
+      companyId: 'company-1',
+      issueId: 'issue-1',
+      decision: 'approve',
+      expectedDocuments: [{ key: 'draft', latestRevisionNumber: 2 }],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('stale');
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
+  });
+
+  test('an issue that already left review is rejected before any write', async () => {
+    const fetchMock = reviewFetch({ status: 'done' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await decideReview({
+      companyId: 'company-1',
+      issueId: 'issue-1',
+      decision: 'approve',
+      expectedDocuments: [{ key: 'draft', latestRevisionNumber: 2 }],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('not in_review');
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
+  });
+
+  test('requesting changes requires a concrete note before any request', async () => {
+    const fetchMock = reviewFetch();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await decideReview({
+      companyId: 'company-1',
+      issueId: 'issue-1',
+      decision: 'request_changes',
+      expectedDocuments: [{ key: 'draft', latestRevisionNumber: 2 }],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('required');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('cancelling obsolete review work records the reason in the same PATCH', async () => {
+    const fetchMock = reviewFetch({ documents: [] });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await decideReview({
+      companyId: 'company-1',
+      issueId: 'issue-1',
+      decision: 'cancel',
+      note: 'Old landing-page direction.',
+      expectedDocuments: [],
+    });
+
+    expect(result.ok).toBe(true);
+    const patch = fetchMock.mock.calls.find(([, init]) => init?.method === 'PATCH');
+    expect(JSON.parse(String(patch?.[1]?.body))).toEqual({
+      status: 'cancelled',
+      comment:
+        'Founder cancelled obsolete review work in FounderOS. Reviewed: no documents. Reason: Old landing-page direction.',
+    });
+  });
+
+  test('the review route refuses a malformed revision list', async () => {
+    const res = await POST(
+      request({
+        action: 'review_decision',
+        companyId: 'company-1',
+        issueId: 'issue-1',
+        decision: 'approve',
+        expectedDocuments: 'not json',
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).detail).toContain('revision list');
   });
 });
 

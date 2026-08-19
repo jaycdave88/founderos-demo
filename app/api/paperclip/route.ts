@@ -10,6 +10,7 @@ import { NextResponse } from 'next/server';
 import {
   addComment,
   createIssue,
+  decideReview,
   getPaperclipPortfolio,
   getPaperclipSnapshot,
   setIssueStatus,
@@ -30,6 +31,10 @@ export async function GET(request: Request) {
         issues: portfolio.companies.reduce((total, company) => total + company.issueCount, 0),
         openIssues: portfolio.companies.reduce(
           (total, company) => total + company.openIssueCount,
+          0,
+        ),
+        reviewIssues: portfolio.companies.reduce(
+          (total, company) => total + company.reviewIssueCount,
           0,
         ),
         blockedIssues: portfolio.companies.reduce(
@@ -94,6 +99,41 @@ export async function POST(request: Request) {
     case 'set_status':
       result = await setIssueStatus(field(payload, 'issueId'), field(payload, 'status'));
       break;
+    case 'review_decision': {
+      let expectedDocuments: Array<{ key: string; latestRevisionNumber: number | null }> = [];
+      try {
+        const parsed = JSON.parse(field(payload, 'expectedDocuments')) as unknown;
+        if (!Array.isArray(parsed)) throw new Error('not an array');
+        expectedDocuments = parsed.map((item) => {
+          if (!item || typeof item !== 'object') throw new Error('invalid document');
+          const document = item as Record<string, unknown>;
+          if (typeof document.key !== 'string') throw new Error('invalid document key');
+          if (
+            document.latestRevisionNumber !== null &&
+            typeof document.latestRevisionNumber !== 'number'
+          ) {
+            throw new Error('invalid document revision');
+          }
+          return {
+            key: document.key,
+            latestRevisionNumber: document.latestRevisionNumber as number | null,
+          };
+        });
+      } catch {
+        return NextResponse.json(
+          { ok: false, detail: 'expectedDocuments must be a valid revision list' },
+          { status: 400 },
+        );
+      }
+      result = await decideReview({
+        companyId: field(payload, 'companyId'),
+        issueId: field(payload, 'issueId'),
+        decision: field(payload, 'decision') as 'approve' | 'request_changes' | 'cancel',
+        note: field(payload, 'note'),
+        expectedDocuments,
+      });
+      break;
+    }
     case 'wake':
       result = await wakeAgent(field(payload, 'agentId'));
       break;

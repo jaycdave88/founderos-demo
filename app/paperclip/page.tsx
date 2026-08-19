@@ -14,7 +14,7 @@ import {
   paperclipCompanyId,
   type PaperclipIssue,
 } from '@/lib/paperclip-live';
-import { CommentBox, NewTask, WakeButton } from './controls';
+import { CommentBox, NewTask, ReviewDecision, WakeButton } from './controls';
 
 export const dynamic = 'force-dynamic';
 
@@ -78,8 +78,17 @@ export default async function PaperclipPage(props: {
     portfolio.companies[0]?.id ??
     requested ??
     configured;
-  const snap = await getPaperclipSnapshot(selectedCompanyId);
+  const snap = await getPaperclipSnapshot(selectedCompanyId, {
+    // Review documents must never fall behind the general 40-document page
+    // cap. Fetch them first, then use the remaining budget for the work board.
+    prioritizeDocumentStatuses: ['in_review'],
+    documentLimit: 60,
+  });
   const env = runtimeEnv();
+  const configuredReviewCap = Number.parseInt(env.FOUNDER_OS_REVIEW_BACKLOG_CAP ?? '20', 10);
+  const reviewCap = Number.isFinite(configuredReviewCap) && configuredReviewCap > 0
+    ? configuredReviewCap
+    : 20;
   const notionCompanyIds = new Set(
     (env.NOTION_DRAFT_COMPANY_IDS ?? '').split(',').map((id) => id.trim()).filter(Boolean),
   );
@@ -94,6 +103,16 @@ export default async function PaperclipPage(props: {
   }
   const nameOf = new Map(snap.agents.map((a) => [a.id, a.name]));
   const openIssues = snap.issues.filter((i) => i.status !== 'done' && i.status !== 'cancelled');
+  const reviewIssues = snap.issues.filter((i) => i.status === 'in_review');
+  const reviewCleanupCount = reviewIssues.filter(
+    (issue) => issue.parentId || (snap.documents[issue.id] ?? []).length === 0,
+  ).length;
+  const reviewPressure = Math.min(100, Math.round((reviewIssues.length / reviewCap) * 100));
+  const reviewColor = reviewIssues.length >= reviewCap
+    ? '#f87171'
+    : reviewPressure >= 75
+      ? '#fde047'
+      : '#22c55e';
 
   return (
     <main style={{ fontFamily: mono, padding: 28, background: '#050505', minHeight: '100vh' }}>
@@ -141,6 +160,9 @@ export default async function PaperclipPage(props: {
                 <div style={{ color: '#7a7a7a', fontSize: 11 }}>
                   {company.agentCount} agents · {company.openIssueCount} open
                 </div>
+                <div style={{ color: company.reviewIssueCount >= reviewCap ? '#f87171' : '#c4b5fd', fontSize: 11, marginTop: 4 }}>
+                  {company.reviewIssueCount} / {reviewCap} awaiting review
+                </div>
                 <div style={{ color: attention > 0 ? '#f87171' : '#22c55e', fontSize: 11, marginTop: 4 }}>
                   {company.ok
                     ? attention > 0
@@ -157,6 +179,134 @@ export default async function PaperclipPage(props: {
             </div>
           )}
         </div>
+      </div>
+
+      <div
+        id="founder-review"
+        style={{
+          ...card,
+          marginBottom: 22,
+          borderColor: reviewIssues.length > 0 ? reviewColor : '#22543d',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ color: '#c4b5fd', fontSize: 11, letterSpacing: '0.08em', marginBottom: 8 }}>
+              FOUNDER REVIEW
+            </div>
+            <div style={{ color: '#e5e5e5', fontSize: 18 }}>
+              {reviewIssues.length} of {reviewCap} awaiting your decision
+            </div>
+          </div>
+          <div style={{ color: reviewColor, fontSize: 12, alignSelf: 'center' }}>
+            {reviewIssues.length === 0
+              ? 'queue clear'
+              : reviewIssues.length >= reviewCap
+                ? 'cadence paused for this company'
+                : `${reviewCap - reviewIssues.length} slots before cadence pauses`}
+          </div>
+        </div>
+        <div
+          style={{
+            height: 5,
+            background: '#171717',
+            borderRadius: 5,
+            overflow: 'hidden',
+            margin: '12px 0 8px',
+          }}
+        >
+          <div style={{ width: `${reviewPressure}%`, height: '100%', background: reviewColor }} />
+        </div>
+        <div style={{ color: '#7a7a7a', fontSize: 11, lineHeight: 1.6, marginBottom: 12 }}>
+          At {reviewCap}, autopilot stops creating new cadence issues for this company only. Agents,
+          existing work, other companies, backups, and services keep running. Approving closes work;
+          it never publishes content.
+          {reviewCleanupCount > 0
+            ? ` ${reviewCleanupCount} item${reviewCleanupCount === 1 ? '' : 's'} need cleanup because they are child handoffs or have no deliverable.`
+            : ''}
+        </div>
+
+        {reviewIssues.map((issue, index) => {
+          const docs = snap.documents[issue.id] ?? [];
+          const cleanupReason = issue.parentId
+            ? 'internal child handoff'
+            : docs.length === 0
+              ? 'missing deliverable'
+              : null;
+          return (
+            <details
+              key={issue.id}
+              open={index === 0}
+              style={{
+                border: '1px solid #262626',
+                borderRadius: 4,
+                padding: '10px 12px',
+                marginTop: 8,
+                background: '#080808',
+              }}
+            >
+              <summary style={{ cursor: 'pointer', listStyle: 'none', color: '#e5e5e5', fontSize: 13 }}>
+                <span style={{ color: '#a78bfa', marginRight: 8 }}>
+                  {issue.identifier ?? issue.id.slice(0, 8)}
+                </span>
+                {issue.title ?? '(untitled)'}
+                <span style={{ color: cleanupReason ? '#fbbf24' : '#22c55e', marginLeft: 8, fontSize: 11 }}>
+                  {cleanupReason ?? `${docs.length} deliverable${docs.length === 1 ? '' : 's'}`}
+                </span>
+              </summary>
+
+              <div style={{ color: '#7a7a7a', fontSize: 11, margin: '8px 0' }}>
+                {issue.parentId
+                  ? 'This is a child issue. Review the output, then close it or cancel it if the parent already owns the canonical deliverable.'
+                  : docs.length === 0
+                    ? 'No document is attached. Approval is disabled; request the missing output or cancel obsolete work.'
+                    : 'Read the exact output below. The server checks these revision numbers again before accepting your decision.'}
+              </div>
+
+              {docs.map((doc) => (
+                <div key={doc.key} style={{ margin: '10px 0 4px' }}>
+                  <div style={{ color: '#7a7a7a', fontSize: 11, letterSpacing: '0.06em' }}>
+                    {doc.key.toUpperCase()}
+                    {doc.latestRevisionNumber !== null ? ` · rev ${doc.latestRevisionNumber}` : ''}
+                    {` · ${doc.body.trim() ? doc.body.trim().split(/\s+/).length : 0} words`}
+                  </div>
+                  <pre
+                    style={{
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      background: '#050505',
+                      border: '1px solid #1c1c1c',
+                      borderRadius: 4,
+                      padding: 12,
+                      maxHeight: 520,
+                      overflowY: 'auto',
+                      fontSize: 12.5,
+                      lineHeight: 1.65,
+                      color: '#cfcfcf',
+                      margin: '6px 0 0',
+                    }}
+                  >
+                    {doc.body}
+                  </pre>
+                </div>
+              ))}
+
+              <ReviewDecision
+                companyId={snap.companyId}
+                issueId={issue.id}
+                documents={docs.map((doc) => ({
+                  key: doc.key,
+                  latestRevisionNumber: doc.latestRevisionNumber,
+                }))}
+              />
+            </details>
+          );
+        })}
+        {reviewIssues.length === 0 && (
+          <div style={{ color: '#86efac', fontSize: 12 }}>
+            Nothing needs your review for this company.
+          </div>
+        )}
       </div>
 
       <div
@@ -264,7 +414,7 @@ export default async function PaperclipPage(props: {
         <div style={{ color: '#7a7a7a', fontSize: 11, letterSpacing: '0.08em', marginBottom: 10 }}>
           WORK
         </div>
-        {[...byStatus.entries()].map(([status, issues]) => (
+        {[...byStatus.entries()].filter(([status]) => status !== 'in_review').map(([status, issues]) => (
           <div key={status} style={{ marginBottom: 16 }}>
             <div style={{ color: '#a3a3a3', fontSize: 12, marginBottom: 6 }}>
               {status} · {issues.length}

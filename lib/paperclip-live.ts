@@ -89,6 +89,7 @@ export type PaperclipIssue = {
   assigneeUserId?: string | null;
   executionState?: PaperclipExecutionState | null;
   activeRecoveryAction?: PaperclipRecoveryAction | null;
+  createdAt?: string | null;
   updatedAt?: string | null;
 };
 
@@ -277,6 +278,7 @@ function toIssue(raw: unknown): PaperclipIssue | null {
     assigneeUserId: str(o.assigneeUserId) ?? null,
     executionState: toExecutionState(o.executionState),
     activeRecoveryAction: toRecoveryAction(o.activeRecoveryAction),
+    createdAt: str(o.createdAt) ?? null,
     updatedAt: str(o.updatedAt) ?? null,
   };
 }

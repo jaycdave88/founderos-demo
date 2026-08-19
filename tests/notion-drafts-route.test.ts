@@ -112,15 +112,20 @@ describe('Notion draft worker route', () => {
     vi.stubEnv('NOTION_DRAFT_SYNC_ENABLED', '1');
     vi.stubEnv('NOTION_DRAFT_DATA_SOURCE_ID', 'source-1');
     vi.stubEnv('NOTION_DRAFT_COMPANY_IDS', 'company-momo,company-faceless');
+    vi.stubEnv('MEDIA_ROOT', '/Users/momo/AI/media');
 
     const response = await post('sync', 'worker-secret');
 
     expect(response.status).toBe(200);
     expect(mocks.snapshot).toHaveBeenCalledTimes(2);
     expect(mocks.snapshot).toHaveBeenCalledWith('company-momo', {
-      documentStatuses: ['in_review'],
+      documentStatuses: ['in_review', 'done'],
+      prioritizeDocumentStatuses: ['in_review'],
       topLevelOnly: true,
       documentLimit: 200,
+    });
+    expect(mocks.candidates).toHaveBeenCalledWith(expect.any(Object), {
+      mediaRoot: '/Users/momo/AI/media',
     });
     expect(mocks.snapshot).toHaveBeenCalledWith('company-faceless', expect.any(Object));
   });

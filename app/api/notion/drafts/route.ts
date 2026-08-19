@@ -143,7 +143,11 @@ export async function POST(request: Request) {
     const companies: Array<{ companyId: string; companyName: string | null; candidates: number }> = [];
     for (const companyId of allowedCompanies) {
       const snapshot = await getPaperclipSnapshot(companyId, {
-        documentStatuses: ['in_review'],
+        // Keep approved rows current after the founder closes Paperclip. A
+        // `done` issue may update an existing review page to Ready to Post;
+        // cancelled and in-flight work remain excluded.
+        documentStatuses: ['in_review', 'done'],
+        prioritizeDocumentStatuses: ['in_review'],
         topLevelOnly: true,
         documentLimit: 200,
       });
@@ -153,7 +157,7 @@ export async function POST(request: Request) {
         );
         continue;
       }
-      const selected = notionDraftCandidates(snapshot);
+      const selected = notionDraftCandidates(snapshot, { mediaRoot: env.MEDIA_ROOT });
       drafts.push(...selected);
       companies.push({
         companyId,

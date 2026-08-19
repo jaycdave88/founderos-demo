@@ -98,15 +98,31 @@ assignment, status, documents, and employee execution. The adapter accepts only
 an explicit company allowlist and copies a draft when the canonical top-level
 issue is `in_review` and has a non-empty document keyed exactly `draft`.
 
-The database is optimized for a human reader: review state, current revision,
-company, Paperclip issue, assigned-employee tag, missing-owner warning, source and
-sync timestamps, word/VERIFY counts, immutable revision/checksum, source link,
-and the complete Markdown draft. Changed drafts create a new current page and
+The database is optimized for a human reader. The article's labelled final
+title is the page name, while the Paperclip issue remains a separate traceable
+field. Rows show creation and sync dates, source verification and verified
+source count, image state, post readiness with the exact missing gate, company,
+assigned employee, missing-owner warning, word/VERIFY counts, immutable
+revision/checksum, source link, and the complete Markdown draft. Changed drafts create a new current page and
 mark the prior page `Superseded`; retries with the same checksum do nothing.
 If Paperclip ownership is corrected without changing the draft, the existing
 page's employee tag and missing-owner warning refresh without overwriting its
 human review state or comments. Notion edits never flow back, close an issue,
 or authorize publication.
+
+Source verification fails closed. It is `Verified` only when the canonical
+issue has a structured `momo-blog-qa` receipt, the full draft has a source
+ledger, every counted source has a URL, and no `[VERIFY:]` marker remains.
+Blog media also fails closed. A `momo-blog-media` receipt must match the company
+and issue, remain inside the configured media root, declare generated-original
+rights, and match the local SHA-256. FounderOS then uploads the local hero to
+Notion-managed storage as the page cover and attaches other images as files.
+The existing database is migrated in place with the new properties. It is not
+replaced and existing pages are enriched instead of duplicated.
+
+`Ready to Post` means all three gates are true: Paperclip status is `done`,
+sources are verified, and the declared image requirement is complete. The
+label still does not publish, schedule, or send anything.
 
 The local route requires `NOTION_DRAFT_SYNC_TOKEN` for every write, refuses an
 unscoped company list, validates the database schema, and serializes syncs.

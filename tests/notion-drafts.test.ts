@@ -1,4 +1,8 @@
 import { describe, expect, test, vi } from 'vitest';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { PaperclipSnapshot } from '@/lib/paperclip-live';
 import {
   buildNotionDraftMarkdown,
@@ -24,10 +28,11 @@ function snapshot(): PaperclipSnapshot {
       {
         id: 'root-ready',
         identifier: 'MOM-45',
-        title: 'Why AI broke the security model',
+        title: 'Draft the next long-form article package',
         status: 'in_review',
         assigneeAgentId: 'writer-1',
         parentId: null,
+        createdAt: '2026-08-17T14:00:00.000Z',
         updatedAt: '2026-08-18T10:00:00.000Z',
       },
       {
@@ -82,9 +87,9 @@ function snapshot(): PaperclipSnapshot {
         },
         {
           key: 'draft',
-          title: 'Why AI broke the security model',
+          title: 'AI security draft review packet',
           format: 'markdown',
-          body: 'A concrete opening.\n\n[VERIFY: source the incident]\n\nThe argument.',
+          body: '**Final title:** Why AI broke the security model\n\nA concrete opening.\n\n[VERIFY: source the incident]\n\nThe argument.',
           latestRevisionNumber: 3,
         },
       ],
@@ -143,6 +148,11 @@ describe('Notion draft completion gate', () => {
       ownerMissing: false,
       revision: 3,
       verifyMarkers: 1,
+      blogTitle: 'Why AI broke the security model',
+      createdAt: '2026-08-17T14:00:00.000Z',
+      sourceVerification: 'Needs Verification',
+      imageStatus: 'Missing Decision',
+      postReadiness: 'Needs Source Verification',
     });
   });
 
@@ -165,15 +175,150 @@ describe('Notion draft completion gate', () => {
     expect(markdown).toContain('MOM-45');
     expect(markdown).toContain('[VERIFY: source the incident]');
     expect(properties).toMatchObject({
-      Name: { title: [{ text: { content: 'MOM-45 — Why AI broke the security model' } }] },
+      Name: { title: [{ text: { content: 'Why AI broke the security model' } }] },
       'Review Status': { select: { name: 'Needs Review' } },
       Current: { checkbox: true },
       Company: { select: { name: 'Momo' } },
       'Assigned Employee': { select: { name: 'Senior Writer' } },
       'Owner Missing': { checkbox: false },
-      Words: { number: 9 },
+      Created: { date: { start: '2026-08-17T14:00:00.000Z' } },
+      'Source Verification': { select: { name: 'Needs Verification' } },
+      'Image Status': { select: { name: 'Missing Decision' } },
+      'Post Readiness': { select: { name: 'Needs Source Verification' } },
       'VERIFY Markers': { number: 1 },
       Revision: { number: 3 },
+    });
+  });
+
+  test('marks sources verified only from a structured QA receipt and never from prose alone', () => {
+    const source = snapshot();
+    source.documents['root-ready'][1].body = [
+      '**Final title:** Why AI broke the security model',
+      '',
+      '## Final article',
+      'A sourced article.',
+      '',
+      '## Source ledger',
+      '- https://example.com/primary (accessed 2026-08-18)',
+    ].join('\n');
+    source.documents['root-ready'].push(
+      {
+        key: 'qa',
+        title: 'Editorial QA',
+        format: 'json',
+        body: JSON.stringify({
+          schemaVersion: 1,
+          kind: 'momo-blog-qa',
+          sourceVerification: 'passed',
+          verifiedSourceCount: 1,
+          reviewedBy: 'Editorial Lead',
+          reviewedAt: '2026-08-18T09:30:00.000Z',
+        }),
+        latestRevisionNumber: 1,
+      },
+      {
+        key: 'media',
+        title: 'Blog media receipt',
+        format: 'json',
+        body: JSON.stringify({
+          schemaVersion: 1,
+          kind: 'momo-blog-media',
+          companyId: 'company-momo',
+          issueId: 'root-ready',
+          hero: { required: false },
+          assets: [],
+        }),
+        latestRevisionNumber: 1,
+      },
+    );
+
+    const reviewed = notionDraftCandidates(source)[0];
+    expect(reviewed).toMatchObject({
+      sourceVerification: 'Verified',
+      verifiedSourceCount: 1,
+      imageStatus: 'Not Required',
+      postReadiness: 'Awaiting Founder Approval',
+    });
+
+    source.issues[0].status = 'done';
+    expect(notionDraftCandidates(source)[0]).toMatchObject({
+      sourceStatus: 'done',
+      postReadiness: 'Ready to Post',
+    });
+  });
+
+  test('accepts a checksummed generated-original hero under the configured media root', () => {
+    const source = snapshot();
+    source.documents['root-ready'][1].body = [
+      '**Final title:** Why AI broke the security model',
+      '',
+      '## Source ledger',
+      '- https://example.com/primary (accessed 2026-08-18)',
+    ].join('\n');
+    const mediaRoot = mkdtempSync(join(tmpdir(), 'momo-notion-media-'));
+    const imagePath = join(mediaRoot, 'hero.png');
+    const bytes = Buffer.from('local generated image fixture');
+    writeFileSync(imagePath, bytes);
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    source.documents['root-ready'].push(
+      {
+        key: 'qa',
+        title: 'Editorial QA',
+        format: 'json',
+        body: JSON.stringify({
+          schemaVersion: 1,
+          kind: 'momo-blog-qa',
+          sourceVerification: 'passed',
+          verifiedSourceCount: 1,
+          reviewedBy: 'Editorial Lead',
+          reviewedAt: '2026-08-18T09:30:00.000Z',
+        }),
+        latestRevisionNumber: 1,
+      },
+      {
+        key: 'media',
+        title: 'Blog media receipt',
+        format: 'json',
+        body: JSON.stringify({
+          schemaVersion: 1,
+          kind: 'momo-blog-media',
+          companyId: 'company-momo',
+          issueId: 'root-ready',
+          hero: { required: true },
+          assets: [
+            {
+              assetId: 'hero-01',
+              placement: 'hero',
+              alt: 'Abstract trust boundary surrounding an enterprise AI agent',
+              path: imagePath,
+              sha256,
+              contentType: 'image/png',
+              rightsBasis: 'generated-original',
+              synthetic: true,
+            },
+          ],
+        }),
+        latestRevisionNumber: 1,
+      },
+    );
+
+    expect(notionDraftCandidates(source, { mediaRoot })[0]).toMatchObject({
+      sourceVerification: 'Verified',
+      heroRequired: true,
+      imageStatus: 'Attached',
+      postReadiness: 'Awaiting Founder Approval',
+      assets: [
+        expect.objectContaining({
+          placement: 'hero',
+          path: imagePath,
+          sha256,
+        }),
+      ],
+    });
+
+    expect(notionDraftCandidates(source, { mediaRoot: join(mediaRoot, 'other') })[0]).toMatchObject({
+      imageStatus: 'Invalid Receipt',
+      postReadiness: 'Needs Images',
     });
   });
 });
@@ -201,6 +346,174 @@ describe('Notion draft database setup and idempotent revision sync', () => {
         initial_data_source: { properties: notionDraftDatabaseSchema() },
       }),
     );
+    expect(notionDraftDatabaseSchema()).toMatchObject({
+      Name: { type: 'title' },
+      Created: { type: 'date' },
+      'Source Verification': { type: 'select' },
+      'Verified Sources': { type: 'number' },
+      'Post Readiness': { type: 'select' },
+      'Image Status': { type: 'select' },
+      'Hero Image': { type: 'files' },
+      'Other Images': { type: 'files' },
+    });
+  });
+
+  test('adds missing editorial properties to an existing database without replacing it', async () => {
+    const complete = notionDraftDatabaseSchema();
+    const retrieve = vi
+      .fn()
+      .mockResolvedValueOnce({
+        object: 'data_source',
+        id: 'source-1',
+        properties: {
+          Name: complete.Name,
+          'Review Status': complete['Review Status'],
+          Current: complete.Current,
+        },
+      })
+      .mockResolvedValueOnce({
+        object: 'data_source',
+        id: 'source-1',
+        properties: complete,
+      });
+    const update = vi.fn(async () => ({ object: 'data_source', id: 'source-1' }));
+    const notion = {
+      dataSources: { retrieve, update, query: vi.fn() },
+      pages: { create: vi.fn(), update: vi.fn() },
+      fileUploads: { create: vi.fn(), send: vi.fn() },
+    } as unknown as NotionDraftClient;
+
+    const result = await syncNotionDrafts(notion, 'source-1', []);
+
+    expect(result).toMatchObject({ ok: true, candidates: 0 });
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data_source_id: 'source-1',
+        properties: expect.objectContaining({
+          Created: complete.Created,
+          'Source Verification': complete['Source Verification'],
+          'Hero Image': complete['Hero Image'],
+        }),
+      }),
+    );
+  });
+
+  test('uploads a verified local hero and attaches it as the page cover', async () => {
+    const source = snapshot();
+    source.documents['root-ready'][1].body = [
+      '**Final title:** Why AI broke the security model',
+      '',
+      '## Source ledger',
+      '- https://example.com/primary (accessed 2026-08-18)',
+    ].join('\n');
+    const mediaRoot = mkdtempSync(join(tmpdir(), 'momo-notion-upload-'));
+    const imagePath = join(mediaRoot, 'hero.png');
+    const bytes = Buffer.from('verified local hero');
+    writeFileSync(imagePath, bytes);
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    source.documents['root-ready'].push(
+      {
+        key: 'qa',
+        title: null,
+        format: 'json',
+        body: JSON.stringify({
+          schemaVersion: 1,
+          kind: 'momo-blog-qa',
+          sourceVerification: 'passed',
+          verifiedSourceCount: 1,
+          reviewedBy: 'Editorial Lead',
+          reviewedAt: '2026-08-18T09:30:00.000Z',
+        }),
+        latestRevisionNumber: 1,
+      },
+      {
+        key: 'media',
+        title: null,
+        format: 'json',
+        body: JSON.stringify({
+          schemaVersion: 1,
+          kind: 'momo-blog-media',
+          companyId: 'company-momo',
+          issueId: 'root-ready',
+          hero: { required: true },
+          assets: [
+            {
+              assetId: 'hero-01',
+              placement: 'hero',
+              alt: 'Abstract trust boundary surrounding an enterprise AI agent',
+              path: imagePath,
+              sha256,
+              contentType: 'image/png',
+              rightsBasis: 'generated-original',
+              synthetic: true,
+            },
+          ],
+        }),
+        latestRevisionNumber: 1,
+      },
+    );
+    const draft = notionDraftCandidates(source, { mediaRoot })[0];
+    const pageCreate = vi.fn(async () => ({ object: 'page', id: 'new-page' }));
+    const uploadCreate = vi.fn(async () => ({ object: 'file_upload', id: 'upload-1' }));
+    const uploadSend = vi.fn(async () => ({ object: 'file_upload', id: 'upload-1', status: 'uploaded' }));
+    const notion = {
+      dataSources: {
+        retrieve: vi.fn(async () => ({
+          object: 'data_source',
+          id: 'source-1',
+          properties: notionDraftDatabaseSchema(),
+        })),
+        update: vi.fn(),
+        query: vi.fn(async () => ({ results: [], has_more: false, next_cursor: null })),
+      },
+      pages: { create: pageCreate, update: vi.fn() },
+      fileUploads: { create: uploadCreate, send: uploadSend },
+    } as unknown as NotionDraftClient;
+
+    const result = await syncNotionDrafts(notion, 'source-1', [draft]);
+
+    expect(result).toMatchObject({ ok: true, created: 1 });
+    expect(uploadCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'single_part', content_type: 'image/png' }),
+    );
+    expect(uploadSend).toHaveBeenCalledWith(
+      expect.objectContaining({ file_upload_id: 'upload-1' }),
+    );
+    expect(pageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cover: { type: 'file_upload', file_upload: { id: 'upload-1' } },
+        properties: expect.objectContaining({
+          'Hero Image': {
+            files: [{ name: 'hero-01.png', type: 'file_upload', file_upload: { id: 'upload-1' } }],
+          },
+        }),
+      }),
+    );
+  });
+
+  test('uses done only to reconcile an existing review page, not to flood Notion with history', async () => {
+    const source = snapshot();
+    source.issues[0].status = 'done';
+    const draft = notionDraftCandidates(source)[0];
+    const pageCreate = vi.fn();
+    const notion = {
+      dataSources: {
+        retrieve: vi.fn(async () => ({
+          object: 'data_source',
+          id: 'source-1',
+          properties: notionDraftDatabaseSchema(),
+        })),
+        update: vi.fn(),
+        query: vi.fn(async () => ({ results: [], has_more: false, next_cursor: null })),
+      },
+      pages: { create: pageCreate, update: vi.fn() },
+      fileUploads: { create: vi.fn(), send: vi.fn() },
+    } as unknown as NotionDraftClient;
+
+    const result = await syncNotionDrafts(notion, 'source-1', [draft]);
+
+    expect(result).toMatchObject({ ok: true, created: 0, skipped: 1 });
+    expect(pageCreate).not.toHaveBeenCalled();
   });
 
   test('skips the same checksum, but creates a new current revision before superseding the old one', async () => {
@@ -215,6 +528,14 @@ describe('Notion draft database setup and idempotent revision sync', () => {
             properties: {
               Checksum: { type: 'rich_text', rich_text: [{ plain_text: draft.checksum }] },
               Current: { type: 'checkbox', checkbox: true },
+              'Metadata Checksum': {
+                type: 'rich_text',
+                rich_text: [{ plain_text: draft.metadataChecksum }],
+              },
+              'Media Checksum': {
+                type: 'rich_text',
+                rich_text: [{ plain_text: draft.mediaChecksum }],
+              },
               'Assigned Employee': { type: 'select', select: { name: 'Senior Writer' } },
               'Owner Missing': { type: 'checkbox', checkbox: false },
             },
@@ -312,13 +633,19 @@ describe('Notion draft database setup and idempotent revision sync', () => {
 
     expect(result).toMatchObject({ ok: true, created: 0, updated: 1, skipped: 0 });
     expect(notion.pages.create).not.toHaveBeenCalled();
-    expect(notion.pages.update).toHaveBeenCalledWith({
-      page_id: 'existing-page',
-      properties: {
-        'Assigned Employee': { select: { name: 'Senior Writer' } },
-        'Owner Missing': { checkbox: false },
-        'Synced At': { date: { start: '2026-08-18T12:00:00.000Z' } },
-      },
-    });
+    expect(notion.pages.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        page_id: 'existing-page',
+        properties: expect.objectContaining({
+          'Assigned Employee': { select: { name: 'Senior Writer' } },
+          'Owner Missing': { checkbox: false },
+          'Synced At': { date: { start: '2026-08-18T12:00:00.000Z' } },
+          Name: { title: [{ type: 'text', text: { content: 'Why AI broke the security model' } }] },
+        }),
+      }),
+    );
+    const updatePayload = vi.mocked(notion.pages.update).mock.calls[0][0];
+    expect(updatePayload.properties).not.toHaveProperty('Review Status');
+    expect(updatePayload.properties).not.toHaveProperty('Checksum');
   });
 });

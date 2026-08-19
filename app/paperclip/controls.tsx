@@ -4,12 +4,13 @@
  * The write half of /paperclip — installed by personal-ai-stack
  * (scripts/65-founderos-paperclip.sh). Regenerated on every run.
  *
- * Every action posts to /api/paperclip and then refreshes the server component,
- * so what you see after a write is re-read from Paperclip rather than patched
- * optimistically in the browser. Slower by a beat, and never shows you a board
- * that does not exist.
+ * Every action posts to /api/paperclip and then performs a full navigation
+ * reload, so what you see after a write is re-read from Paperclip rather than
+ * patched optimistically in the browser. Next 14's production router refresh
+ * can fail while applying the streamed server-component result and leave the
+ * old issue card mounted even though Paperclip already closed it. A hard
+ * reload is slower by a beat, but cannot preserve that stale client tree.
  */
-import { useRouter } from 'next/navigation';
 import { useState, type CSSProperties } from 'react';
 
 const input: CSSProperties = {
@@ -37,7 +38,6 @@ const button: CSSProperties = {
 type Agent = { id: string; name: string };
 
 function useAction() {
-  const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
 
@@ -53,7 +53,7 @@ function useAction() {
       const data = (await res.json()) as { ok?: boolean; detail?: string };
       if (res.ok && data.ok) {
         setNote('done');
-        router.refresh();
+        window.location.reload();
         return true;
       }
       setNote(data.detail ?? `failed (HTTP ${res.status})`);

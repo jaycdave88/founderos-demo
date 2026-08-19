@@ -590,7 +590,37 @@ export async function decideReview(input: {
         ? { status: 'in_progress', comment: `Founder requested changes in FounderOS. Reviewed: ${reviewed}. Changes: ${note}` }
         : { status: 'cancelled', comment: `Founder cancelled obsolete review work in FounderOS. Reviewed: ${reviewed}. Reason: ${note}` };
 
-  return send('PATCH', `/api/issues/${input.issueId}`, transition);
+  const written = await send('PATCH', `/api/issues/${input.issueId}`, transition);
+  if (!written.ok) return written;
+
+  // A 2xx proves Paperclip accepted the request, not that the state the next
+  // screen will read is the state we intended. Confirm through the same
+  // company-scoped read used by the page before telling the browser to reload.
+  const confirmationErrors: string[] = [];
+  const confirmedRaw = await getJson(
+    `/api/companies/${cid}/issues?view=compact`,
+    confirmationErrors,
+  );
+  if (confirmedRaw === null) {
+    return {
+      ok: false,
+      detail: confirmationErrors.join(' · ') || 'Paperclip accepted the decision but confirmation failed',
+    };
+  }
+  const confirmed = asArray(confirmedRaw)
+    .map(toIssue)
+    .find((candidate) => candidate?.id === input.issueId);
+  if (!confirmed) {
+    return { ok: false, detail: 'Paperclip accepted the decision but the issue disappeared during confirmation' };
+  }
+  if (confirmed.status !== transition.status) {
+    return {
+      ok: false,
+      detail: `Paperclip accepted the decision but still reports ${confirmed.status ?? 'unknown'}; expected ${transition.status}`,
+    };
+  }
+
+  return { ok: true, detail: `confirmed ${transition.status}` };
 }
 
 /**

@@ -112,8 +112,9 @@ describe('POST /api/paperclip set_status', () => {
 function reviewFetch(options: {
   status?: string;
   documents?: Array<{ key: string; body?: string; latestRevisionNumber: number | null }>;
+  ignorePatch?: boolean;
 } = {}) {
-  const status = options.status ?? 'in_review';
+  let status = options.status ?? 'in_review';
   const documents = options.documents ?? [
     { key: 'draft', body: '# Current draft', latestRevisionNumber: 2 },
   ];
@@ -126,6 +127,9 @@ function reviewFetch(options: {
       return new Response(JSON.stringify(documents), { status: 200 });
     }
     if (path === '/api/issues/issue-1' && init?.method === 'PATCH') {
+      if (!options.ignorePatch) {
+        status = String((JSON.parse(String(init.body)) as { status?: string }).status ?? status);
+      }
       return new Response('{}', { status: 200 });
     }
     return new Response('not found', { status: 404 });
@@ -146,6 +150,7 @@ describe('founder review decisions', () => {
     });
 
     expect(result.ok).toBe(true);
+    expect(result.detail).toBe('confirmed done');
     const patch = fetchMock.mock.calls.find(([, init]) => init?.method === 'PATCH');
     expect(patch).toBeDefined();
     expect(JSON.parse(String(patch?.[1]?.body))).toEqual({
@@ -224,6 +229,22 @@ describe('founder review decisions', () => {
       comment:
         'Founder cancelled obsolete review work in FounderOS. Reviewed: no documents. Reason: Old landing-page direction.',
     });
+    expect(result.detail).toBe('confirmed cancelled');
+  });
+
+  test('a 2xx without the intended observable status is not reported as success', async () => {
+    const fetchMock = reviewFetch({ ignorePatch: true });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await decideReview({
+      companyId: 'company-1',
+      issueId: 'issue-1',
+      decision: 'approve',
+      expectedDocuments: [{ key: 'draft', latestRevisionNumber: 2 }],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('still reports in_review');
   });
 
   test('the review route refuses a malformed revision list', async () => {

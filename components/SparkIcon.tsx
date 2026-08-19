@@ -1,11 +1,8 @@
 /**
- * The agent emblem — the Vantage mark (public/vantage-emblem.png,
- * background keyed out and cropped).
- *
- * The PNG is used as a CSS mask over a solid color, so `shade` tints the exact
- * brand silhouette to any color — black for the Conductor, each department's
- * life-area color for its agents, etc. (The mint PNG was invisible on the
- * light theme's white; masking fixes that.)
+ * The agent emblem. Keep it inline: the earlier CSS mask referenced an
+ * untracked raster file, leaving every instance blank and producing
+ * a 404 on each page load. `currentColor` preserves the existing per-agent
+ * tinting without a runtime asset request.
  */
 export const EMBLEM_MINT = '#00ffab';
 
@@ -19,25 +16,22 @@ export function SparkIcon({
   className?: string;
 }) {
   return (
-    <span
+    <svg
       role="img"
-      aria-label="Vantage"
+      aria-label="Agent"
+      viewBox="0 0 24 24"
       className={`emblem inline-block shrink-0 ${className}`}
       style={{
         width: size,
         height: size,
-        backgroundColor: shade,
-        // color drives the hover drop-shadow glow (.emblem in globals.css)
         color: shade,
-        WebkitMaskImage: 'url(/vantage-emblem.png)',
-        maskImage: 'url(/vantage-emblem.png)',
-        WebkitMaskRepeat: 'no-repeat',
-        maskRepeat: 'no-repeat',
-        WebkitMaskPosition: 'center',
-        maskPosition: 'center',
-        WebkitMaskSize: 'contain',
-        maskSize: 'contain',
       }}
-    />
+    >
+      <path
+        fill="currentColor"
+        d="M12 1.5 14.65 8.8 22.5 12l-7.85 3.2L12 22.5l-2.65-7.3L1.5 12l7.85-3.2L12 1.5Z"
+      />
+      <circle cx="12" cy="12" r="2.15" fill="var(--surface)" />
+    </svg>
   );
 }

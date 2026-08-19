@@ -67,9 +67,9 @@ function ago(iso: string | null | undefined): string {
 }
 
 export default async function PaperclipPage(props: {
-  searchParams?: { companyId?: string };
+  searchParams?: Promise<{ companyId?: string }>;
 }) {
-  const searchParams = props?.searchParams;
+  const searchParams = await props?.searchParams;
   const portfolio = await getPaperclipPortfolio();
   const requested = searchParams?.companyId;
   const configured = paperclipCompanyId();

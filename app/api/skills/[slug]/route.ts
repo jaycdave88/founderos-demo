@@ -12,11 +12,12 @@ export const dynamic = 'force-dynamic';
  * this skill" — and the alternative was a second reader that looked identical
  * and fetched somewhere else.
  */
-export async function GET(_req: Request, { params }: { params: { slug: string } }) {
-  const local = readSkillMarkdown(params.slug);
+export async function GET(_req: Request, { params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const local = readSkillMarkdown(slug);
   if (local !== null) return NextResponse.json({ markdown: local, source: 'local' });
 
-  const remote = await readPaperclipSkillMarkdown(params.slug);
+  const remote = await readPaperclipSkillMarkdown(slug);
   if (remote !== null) return NextResponse.json({ markdown: remote, source: 'paperclip' });
 
   return NextResponse.json({ error: 'skill not found on disk or in Paperclip' }, { status: 404 });

@@ -10,6 +10,8 @@
    every var(--ease) animation on the others. */
 :root {
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  /* Build and boot must not depend on Google Fonts being reachable. */
+  --font-mono: SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
 }
 
 /* Dark (phosphor terminal). */

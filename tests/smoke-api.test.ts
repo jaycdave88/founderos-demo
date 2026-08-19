@@ -67,7 +67,7 @@ describe('platform smoke — every GET API route answers 200 with JSON', () => {
   test.each(ROUTES)('GET /api/$route', async ({ load, url, params }) => {
     const mod = await load();
     expect(mod.GET, 'route should export GET').toBeTypeOf('function');
-    const res = (await mod.GET!(new Request(url), { params })) as Response;
+    const res = (await mod.GET!(new Request(url), { params: Promise.resolve(params ?? {}) })) as Response;
     expect(res.status, `GET ${url} should be 200 (honest state, not 500/400)`).toBe(200);
     const body = await res.json();
     expect(body && typeof body === 'object').toBe(true);

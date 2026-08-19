@@ -49,6 +49,16 @@ function paperclipFetch() {
         { id: 'issue-b3', status: 'backlog', assigneeAgentId: null },
         { id: 'issue-b4', status: 'in_review', assigneeAgentId: null },
         { id: 'issue-b5', status: 'todo', assigneeAgentId: null, assigneeUserId: 'founder' },
+        { id: 'issue-b6', status: 'in_review', parentId: 'issue-b4', assigneeAgentId: 'agent-b2' },
+        {
+          id: 'issue-b7',
+          status: 'in_review',
+          assigneeAgentId: 'agent-b2',
+          executionState: {
+            status: 'pending',
+            currentParticipant: { type: 'agent', agentId: 'agent-b2' },
+          },
+        },
       ]);
     }
     if (path === '/api/issues/issue-b1/documents') return json([]);
@@ -56,6 +66,8 @@ function paperclipFetch() {
     if (path === '/api/issues/issue-b3/documents') return json([]);
     if (path === '/api/issues/issue-b4/documents') return json([]);
     if (path === '/api/issues/issue-b5/documents') return json([]);
+    if (path === '/api/issues/issue-b6/documents') return json([]);
+    if (path === '/api/issues/issue-b7/documents') return json([]);
     if (path === '/api/companies/company-b/issues' && init?.method === 'POST') return json({}, 201);
     return json({ error: `unexpected ${init?.method ?? 'GET'} ${path}` }, 404);
   });
@@ -95,8 +107,8 @@ describe('Paperclip company portfolio', () => {
         id: 'company-b',
         name: 'Beta',
         agentCount: 2,
-        issueCount: 5,
-        openIssueCount: 5,
+        issueCount: 7,
+        openIssueCount: 7,
         reviewIssueCount: 1,
         blockedIssueCount: 1,
         unassignedOpenIssueCount: 1,
@@ -141,7 +153,7 @@ describe('Paperclip company portfolio', () => {
 
     const selected = await GET(new Request('http://localhost/api/paperclip?companyId=company-b'));
     expect(selected.status).toBe(200);
-    expect(await selected.json()).toMatchObject({ companyId: 'company-b', counts: { agents: 2, issues: 5 } });
+    expect(await selected.json()).toMatchObject({ companyId: 'company-b', counts: { agents: 2, issues: 7 } });
 
     const portfolio = await GET(new Request('http://localhost/api/paperclip?view=portfolio'));
     expect(portfolio.status).toBe(200);
@@ -150,7 +162,7 @@ describe('Paperclip company portfolio', () => {
       counts: {
         companies: 2,
         agents: 3,
-        openIssues: 5,
+        openIssues: 7,
         reviewIssues: 1,
         blockedIssues: 1,
         unassignedOpenIssues: 1,

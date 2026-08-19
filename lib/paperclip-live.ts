@@ -79,13 +79,30 @@ export function isIssueStatus(value: string): value is IssueStatus {
 
 export type PaperclipIssue = {
   id: string;
+  companyId?: string;
   identifier?: string;
   title?: string;
   status?: string;
   parentId?: string | null;
   assigneeAgentId?: string | null;
   assigneeUserId?: string | null;
+  executionState?: PaperclipExecutionState | null;
   updatedAt?: string | null;
+};
+
+export type PaperclipExecutionParticipant = {
+  type?: string;
+  agentId?: string;
+  userId?: string;
+};
+
+export type PaperclipExecutionState = {
+  status?: string;
+  currentStageId?: string;
+  currentStageIndex?: number;
+  currentParticipant?: PaperclipExecutionParticipant | null;
+  lastDecisionId?: string | null;
+  lastDecisionOutcome?: string | null;
 };
 
 export type PaperclipDocument = {
@@ -208,6 +225,30 @@ function toDocument(raw: unknown): PaperclipDocument | null {
   };
 }
 
+function toExecutionParticipant(raw: unknown): PaperclipExecutionParticipant | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  return {
+    type: str(o.type),
+    agentId: str(o.agentId),
+    userId: str(o.userId),
+  };
+}
+
+function toExecutionState(raw: unknown): PaperclipExecutionState | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  return {
+    status: str(o.status),
+    currentStageId: str(o.currentStageId),
+    currentStageIndex:
+      typeof o.currentStageIndex === 'number' ? o.currentStageIndex : undefined,
+    currentParticipant: toExecutionParticipant(o.currentParticipant),
+    lastDecisionId: str(o.lastDecisionId) ?? null,
+    lastDecisionOutcome: str(o.lastDecisionOutcome) ?? null,
+  };
+}
+
 function toIssue(raw: unknown): PaperclipIssue | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
@@ -215,14 +256,31 @@ function toIssue(raw: unknown): PaperclipIssue | null {
   if (!id) return null;
   return {
     id,
+    companyId: str(o.companyId),
     identifier: str(o.identifier),
     title: str(o.title),
     status: str(o.status),
     parentId: str(o.parentId) ?? null,
     assigneeAgentId: str(o.assigneeAgentId) ?? null,
     assigneeUserId: str(o.assigneeUserId) ?? null,
+    executionState: toExecutionState(o.executionState),
     updatedAt: str(o.updatedAt) ?? null,
   };
+}
+
+/**
+ * Founder review is a business queue, not an alias for Paperclip's entire
+ * `in_review` lane. Delegated children belong to their accountable parent, and
+ * a native execution-policy stage assigned to an agent belongs to that agent.
+ * Legacy top-level issues have no executionState and remain founder-visible.
+ */
+export function isFounderReviewIssue(issue: PaperclipIssue): boolean {
+  if (issue.status !== 'in_review' || !!issue.parentId) return false;
+  const participant =
+    issue.executionState?.status === 'pending'
+      ? issue.executionState.currentParticipant
+      : null;
+  return participant?.type !== 'agent';
 }
 
 export async function getPaperclipCompanies(): Promise<PaperclipCompanies> {
@@ -401,7 +459,7 @@ export async function getPaperclipPortfolio(): Promise<PaperclipPortfolio> {
       agentCount: snapshot.agents.length,
       issueCount: snapshot.issues.length,
       openIssueCount: open.length,
-      reviewIssueCount: open.filter((issue) => issue.status === 'in_review').length,
+      reviewIssueCount: open.filter(isFounderReviewIssue).length,
       blockedIssueCount: open.filter((issue) => issue.status === 'blocked').length,
       // Founder review is a deliberate queue, not abandoned agent work. A
       // human assignee is also an owner even when assigneeAgentId is null.
@@ -434,7 +492,7 @@ export async function getPaperclipPortfolio(): Promise<PaperclipPortfolio> {
  * PAPERCLIP_API_KEY is set.
  */
 
-export type WriteResult = { ok: boolean; detail: string };
+export type WriteResult = { ok: boolean; detail: string; data?: unknown };
 
 export type ReviewDecision = 'approve' | 'request_changes' | 'cancel';
 
@@ -455,14 +513,23 @@ async function send(method: 'POST' | 'PATCH', path: string, payload: unknown): P
       cache: 'no-store',
       signal: AbortSignal.timeout(15000),
     });
+    const responseText = await res.text();
     if (!res.ok) {
       // Paperclip's rejection text is the useful half — it names the field it
       // refused. Swallowing it for a tidy "failed" is how a wrong payload turns
       // into a debugging session.
-      const text = (await res.text()).slice(0, 300);
+      const text = responseText.slice(0, 300);
       return { ok: false, detail: `HTTP ${res.status}${text ? ` — ${text}` : ''}` };
     }
-    return { ok: true, detail: 'ok' };
+    let data: unknown;
+    if (responseText) {
+      try {
+        data = JSON.parse(responseText) as unknown;
+      } catch {
+        data = responseText;
+      }
+    }
+    return { ok: true, detail: 'ok', data };
   } catch (err) {
     return { ok: false, detail: err instanceof Error ? err.message : 'request failed' };
   }
@@ -551,13 +618,27 @@ export async function decideReview(input: {
   }
   if (note.length > 2000) return { ok: false, detail: 'review note must be 2000 characters or fewer' };
 
+  const targetStatus =
+    input.decision === 'approve'
+      ? 'done'
+      : input.decision === 'request_changes'
+        ? 'in_progress'
+        : 'cancelled';
+
   const errors: string[] = [];
-  const issuesRaw = await getJson(`/api/companies/${cid}/issues?view=compact`, errors);
-  if (issuesRaw === null) return { ok: false, detail: errors.join(' · ') || 'could not read company issues' };
-  const issue = asArray(issuesRaw)
-    .map(toIssue)
-    .find((candidate) => candidate?.id === input.issueId);
-  if (!issue) return { ok: false, detail: 'issue does not belong to the selected company' };
+  // The company compact list is a read model and can briefly lag a successful
+  // PATCH. The direct issue route is the authoritative retry/staleness check.
+  const issueRaw = await getJson(`/api/issues/${input.issueId}`, errors);
+  if (issueRaw === null) return { ok: false, detail: errors.join(' · ') || 'could not read issue' };
+  const issue = toIssue(issueRaw);
+  if (!issue || issue.companyId !== cid) {
+    return { ok: false, detail: 'issue does not belong to the selected company' };
+  }
+  // A browser retry after a committed decision must not append another audit
+  // comment. The requested terminal state is already the desired outcome.
+  if (issue.status === targetStatus) {
+    return { ok: true, detail: `already ${targetStatus}; no duplicate decision written` };
+  }
   if (issue.status !== 'in_review') {
     return { ok: false, detail: `review is stale: issue is ${issue.status ?? 'unknown'}, not in_review` };
   }
@@ -593,34 +674,34 @@ export async function decideReview(input: {
   const written = await send('PATCH', `/api/issues/${input.issueId}`, transition);
   if (!written.ok) return written;
 
-  // A 2xx proves Paperclip accepted the request, not that the state the next
-  // screen will read is the state we intended. Confirm through the same
-  // company-scoped read used by the page before telling the browser to reload.
-  const confirmationErrors: string[] = [];
-  const confirmedRaw = await getJson(
-    `/api/companies/${cid}/issues?view=compact`,
-    confirmationErrors,
-  );
-  if (confirmedRaw === null) {
-    return {
-      ok: false,
-      detail: confirmationErrors.join(' · ') || 'Paperclip accepted the decision but confirmation failed',
-    };
+  // Paperclip returns the committed issue from PATCH. Use it directly instead
+  // of immediately querying the eventually refreshed compact-list read model.
+  const confirmed = toIssue(written.data);
+  if (!confirmed || confirmed.companyId !== cid) {
+    return { ok: false, detail: 'Paperclip accepted the decision but returned no verifiable issue state' };
   }
-  const confirmed = asArray(confirmedRaw)
-    .map(toIssue)
-    .find((candidate) => candidate?.id === input.issueId);
-  if (!confirmed) {
-    return { ok: false, detail: 'Paperclip accepted the decision but the issue disappeared during confirmation' };
-  }
-  if (confirmed.status !== transition.status) {
-    return {
-      ok: false,
-      detail: `Paperclip accepted the decision but still reports ${confirmed.status ?? 'unknown'}; expected ${transition.status}`,
-    };
+  if (confirmed.status === targetStatus) {
+    return { ok: true, detail: `confirmed ${targetStatus}` };
   }
 
-  return { ok: true, detail: `confirmed ${transition.status}` };
+  // Approving one native execution-policy stage can legitimately leave the
+  // issue in_review while moving it to the next participant. A new decision id
+  // is the durable proof that this request advanced the workflow.
+  const previousDecisionId = issue.executionState?.lastDecisionId ?? null;
+  const nextDecisionId = confirmed.executionState?.lastDecisionId ?? null;
+  if (
+    input.decision === 'approve' &&
+    confirmed.status === 'in_review' &&
+    !!nextDecisionId &&
+    nextDecisionId !== previousDecisionId
+  ) {
+    return { ok: true, detail: 'confirmed approval; advanced to the next review stage' };
+  }
+
+  return {
+    ok: false,
+    detail: `Paperclip accepted the decision but returned ${confirmed.status ?? 'unknown'}; expected ${targetStatus}`,
+  };
 }
 
 /**

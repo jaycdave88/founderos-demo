@@ -11,6 +11,7 @@ import { runtimeEnv } from '@/lib/creds';
 import {
   getPaperclipPortfolio,
   getPaperclipSnapshot,
+  isFounderReviewIssue,
   paperclipCompanyId,
   type PaperclipIssue,
 } from '@/lib/paperclip-live';
@@ -82,6 +83,7 @@ export default async function PaperclipPage(props: {
     // Review documents must never fall behind the general 40-document page
     // cap. Fetch them first, then use the remaining budget for the work board.
     prioritizeDocumentStatuses: ['in_review'],
+    topLevelOnly: true,
     documentLimit: 60,
   });
   const env = runtimeEnv();
@@ -103,9 +105,19 @@ export default async function PaperclipPage(props: {
   }
   const nameOf = new Map(snap.agents.map((a) => [a.id, a.name]));
   const openIssues = snap.issues.filter((i) => i.status !== 'done' && i.status !== 'cancelled');
-  const reviewIssues = snap.issues.filter((i) => i.status === 'in_review');
+  const reviewIssues = snap.issues.filter(isFounderReviewIssue);
+  const internalReviewHandoffs = snap.issues.filter(
+    (issue) => issue.status === 'in_review' && !!issue.parentId,
+  );
+  const agentReviewStages = snap.issues.filter(
+    (issue) =>
+      issue.status === 'in_review' &&
+      !issue.parentId &&
+      issue.executionState?.status === 'pending' &&
+      issue.executionState.currentParticipant?.type === 'agent',
+  );
   const reviewCleanupCount = reviewIssues.filter(
-    (issue) => issue.parentId || (snap.documents[issue.id] ?? []).length === 0,
+    (issue) => (snap.documents[issue.id] ?? []).length === 0,
   ).length;
   const reviewPressure = Math.min(100, Math.round((reviewIssues.length / reviewCap) * 100));
   const reviewColor = reviewIssues.length >= reviewCap
@@ -222,17 +234,35 @@ export default async function PaperclipPage(props: {
           existing work, other companies, backups, and services keep running. Approving closes work;
           it never publishes content.
           {reviewCleanupCount > 0
-            ? ` ${reviewCleanupCount} item${reviewCleanupCount === 1 ? '' : 's'} need cleanup because they are child handoffs or have no deliverable.`
+            ? ` ${reviewCleanupCount} item${reviewCleanupCount === 1 ? '' : 's'} need cleanup because they have no deliverable.`
             : ''}
         </div>
 
+        {(internalReviewHandoffs.length > 0 || agentReviewStages.length > 0) && (
+          <div
+            style={{
+              color: '#a3a3a3',
+              background: '#101010',
+              border: '1px solid #262626',
+              borderRadius: 4,
+              padding: '8px 10px',
+              fontSize: 11,
+              lineHeight: 1.6,
+              marginBottom: 12,
+            }}
+          >
+            {internalReviewHandoffs.length > 0
+              ? `${internalReviewHandoffs.length} internal child handoff${internalReviewHandoffs.length === 1 ? '' : 's'} excluded from your queue; the accountable parent/team must close them. `
+              : ''}
+            {agentReviewStages.length > 0
+              ? `${agentReviewStages.length} agent review stage${agentReviewStages.length === 1 ? '' : 's'} excluded and assigned to its Paperclip participant.`
+              : ''}
+          </div>
+        )}
+
         {reviewIssues.map((issue, index) => {
           const docs = snap.documents[issue.id] ?? [];
-          const cleanupReason = issue.parentId
-            ? 'internal child handoff'
-            : docs.length === 0
-              ? 'missing deliverable'
-              : null;
+          const cleanupReason = docs.length === 0 ? 'missing deliverable' : null;
           return (
             <details
               key={issue.id}
@@ -256,11 +286,9 @@ export default async function PaperclipPage(props: {
               </summary>
 
               <div style={{ color: '#7a7a7a', fontSize: 11, margin: '8px 0' }}>
-                {issue.parentId
-                  ? 'This is a child issue. Review the output, then close it or cancel it if the parent already owns the canonical deliverable.'
-                  : docs.length === 0
-                    ? 'No document is attached. Approval is disabled; request the missing output or cancel obsolete work.'
-                    : 'Read the exact output below. The server checks these revision numbers again before accepting your decision.'}
+                {docs.length === 0
+                  ? 'No document is attached. Approval is disabled; request the missing output or cancel obsolete work.'
+                  : 'Read the exact output below. The server checks these revision numbers again before accepting your decision.'}
               </div>
 
               {docs.map((doc) => (

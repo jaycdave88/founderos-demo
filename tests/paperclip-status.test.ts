@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
   ISSUE_STATUSES,
   decideReview,
+  isFounderReviewIssue,
   isIssueStatus,
   setIssueStatus,
 } from '@/lib/paperclip-live';
@@ -113,6 +114,8 @@ function reviewFetch(options: {
   status?: string;
   documents?: Array<{ key: string; body?: string; latestRevisionNumber: number | null }>;
   ignorePatch?: boolean;
+  compactStatus?: string;
+  patchIssue?: Record<string, unknown>;
 } = {}) {
   let status = options.status ?? 'in_review';
   const documents = options.documents ?? [
@@ -121,7 +124,15 @@ function reviewFetch(options: {
   return vi.fn(async (url: string, init?: RequestInit) => {
     const path = new URL(url).pathname + new URL(url).search;
     if (path === '/api/companies/company-1/issues?view=compact') {
-      return new Response(JSON.stringify([{ id: 'issue-1', status }]), { status: 200 });
+      return new Response(
+        JSON.stringify([{ id: 'issue-1', status: options.compactStatus ?? status }]),
+        { status: 200 },
+      );
+    }
+    if (path === '/api/issues/issue-1' && !init?.method) {
+      return new Response(JSON.stringify({ id: 'issue-1', companyId: 'company-1', status }), {
+        status: 200,
+      });
     }
     if (path === '/api/issues/issue-1/documents') {
       return new Response(JSON.stringify(documents), { status: 200 });
@@ -130,7 +141,10 @@ function reviewFetch(options: {
       if (!options.ignorePatch) {
         status = String((JSON.parse(String(init.body)) as { status?: string }).status ?? status);
       }
-      return new Response('{}', { status: 200 });
+      return new Response(
+        JSON.stringify(options.patchIssue ?? { id: 'issue-1', companyId: 'company-1', status }),
+        { status: 200 },
+      );
     }
     return new Response('not found', { status: 404 });
   });
@@ -138,7 +152,9 @@ function reviewFetch(options: {
 
 describe('founder review decisions', () => {
   test('approval re-reads the exact revision then atomically records status and decision', async () => {
-    const fetchMock = reviewFetch();
+    // The company compact list deliberately stays stale. Paperclip's PATCH
+    // response is the committed issue and must win over that read model.
+    const fetchMock = reviewFetch({ compactStatus: 'in_review' });
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await decideReview({
@@ -151,6 +167,11 @@ describe('founder review decisions', () => {
 
     expect(result.ok).toBe(true);
     expect(result.detail).toBe('confirmed done');
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).includes('/api/companies/company-1/issues?view=compact'),
+      ),
+    ).toBe(false);
     const patch = fetchMock.mock.calls.find(([, init]) => init?.method === 'PATCH');
     expect(patch).toBeDefined();
     expect(JSON.parse(String(patch?.[1]?.body))).toEqual({
@@ -178,8 +199,24 @@ describe('founder review decisions', () => {
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
   });
 
-  test('an issue that already left review is rejected before any write', async () => {
+  test('a repeated approval of an already-done issue succeeds without another comment', async () => {
     const fetchMock = reviewFetch({ status: 'done' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await decideReview({
+      companyId: 'company-1',
+      issueId: 'issue-1',
+      decision: 'approve',
+      expectedDocuments: [{ key: 'draft', latestRevisionNumber: 2 }],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('already done');
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
+  });
+
+  test('an issue that left review for a different state is rejected before any write', async () => {
+    const fetchMock = reviewFetch({ status: 'blocked' });
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await decideReview({
@@ -244,7 +281,36 @@ describe('founder review decisions', () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.detail).toContain('still reports in_review');
+    expect(result.detail).toContain('returned in_review');
+  });
+
+  test('approval can advance a real multi-stage review without falsely claiming done', async () => {
+    const fetchMock = reviewFetch({
+      patchIssue: {
+        id: 'issue-1',
+        companyId: 'company-1',
+        status: 'in_review',
+        executionState: {
+          status: 'pending',
+          currentStageId: 'approval-2',
+          currentStageIndex: 1,
+          currentParticipant: { type: 'agent', agentId: 'legal-reviewer' },
+          lastDecisionId: 'decision-1',
+          lastDecisionOutcome: 'approved',
+        },
+      },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await decideReview({
+      companyId: 'company-1',
+      issueId: 'issue-1',
+      decision: 'approve',
+      expectedDocuments: [{ key: 'draft', latestRevisionNumber: 2 }],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('advanced');
   });
 
   test('the review route refuses a malformed revision list', async () => {
@@ -260,6 +326,38 @@ describe('founder review decisions', () => {
 
     expect(res.status).toBe(400);
     expect((await res.json()).detail).toContain('revision list');
+  });
+});
+
+describe('founder review classification', () => {
+  test('only top-level human or legacy review work enters the founder queue', () => {
+    expect(isFounderReviewIssue({ id: 'legacy', status: 'in_review', parentId: null })).toBe(true);
+    expect(
+      isFounderReviewIssue({
+        id: 'human-stage',
+        status: 'in_review',
+        parentId: null,
+        executionState: {
+          status: 'pending',
+          currentParticipant: { type: 'user', userId: 'founder' },
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isFounderReviewIssue({
+        id: 'agent-stage',
+        status: 'in_review',
+        parentId: null,
+        executionState: {
+          status: 'pending',
+          currentParticipant: { type: 'agent', agentId: 'qa' },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isFounderReviewIssue({ id: 'child', status: 'in_review', parentId: 'parent-1' }),
+    ).toBe(false);
+    expect(isFounderReviewIssue({ id: 'done', status: 'done', parentId: null })).toBe(false);
   });
 });
 

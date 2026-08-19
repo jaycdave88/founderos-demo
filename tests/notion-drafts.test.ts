@@ -57,6 +57,19 @@ function snapshot(): PaperclipSnapshot {
         parentId: null,
         updatedAt: '2026-08-18T07:00:00.000Z',
       },
+      {
+        id: 'agent-review',
+        identifier: 'MOM-49',
+        title: 'QA is still reviewing this draft',
+        status: 'in_review',
+        assigneeAgentId: 'editor-1',
+        parentId: null,
+        executionState: {
+          status: 'pending',
+          currentParticipant: { type: 'agent', agentId: 'editor-1' },
+        },
+        updatedAt: '2026-08-18T06:00:00.000Z',
+      },
     ],
     documents: {
       'root-ready': [
@@ -102,13 +115,22 @@ function snapshot(): PaperclipSnapshot {
           latestRevisionNumber: 1,
         },
       ],
+      'agent-review': [
+        {
+          key: 'draft',
+          title: null,
+          format: 'markdown',
+          body: 'Not ready for the founder until QA signs off.',
+          latestRevisionNumber: 1,
+        },
+      ],
     },
     errors: [],
   };
 }
 
 describe('Notion draft completion gate', () => {
-  test('exports only a top-level in-review issue carrying the exact draft key', () => {
+  test('exports only a founder-owned top-level review carrying the exact draft key', () => {
     const candidates = notionDraftCandidates(snapshot());
 
     expect(candidates).toHaveLength(1);

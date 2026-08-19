@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Client } from '@notionhq/client';
-import type { PaperclipSnapshot } from '@/lib/paperclip-live';
+import { isFounderReviewIssue, type PaperclipSnapshot } from '@/lib/paperclip-live';
 
 export type NotionDraftClient = Pick<Client, 'databases' | 'dataSources' | 'pages'>;
 
@@ -60,7 +60,7 @@ function checksum(parts: string[]): string {
 export function notionDraftCandidates(snapshot: PaperclipSnapshot): NotionDraftCandidate[] {
   const agents = new Map(snapshot.agents.map((agent) => [agent.id, agent.name]));
   return snapshot.issues.flatMap((issue) => {
-    if (issue.status !== 'in_review' || issue.parentId) return [];
+    if (!isFounderReviewIssue(issue)) return [];
     const document = (snapshot.documents[issue.id] ?? []).find(
       (candidate) => candidate.key === 'draft' && candidate.body.trim().length > 0,
     );

@@ -41,6 +41,17 @@ npm run typecheck            # tsc --noEmit
 npm run seed                 # re-seed the demo DB (idempotent)
 ```
 
+### Local security boundary
+
+FounderOS contains write-capable operator APIs and is intentionally a local
+control plane. Development and production servers bind only to
+`127.0.0.1:4100`. The API proxy rejects non-loopback Host headers and rejects
+cross-site browser writes before a route runs, while still allowing local
+workers without browser Origin headers. Global responses carry a restrictive
+content security policy, clickjacking and MIME protections, and API responses
+are non-cacheable. Run `npm run security:audit` before deployment; any known
+dependency advisory at the low threshold or above is a release blocker.
+
 ---
 
 ## What you're looking at

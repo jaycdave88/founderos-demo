@@ -9,8 +9,10 @@ import {
   buildNotionDraftProperties,
   notionDraftCandidates,
   notionDraftDatabaseSchema,
+  notionDraftGroupingCandidates,
   setupNotionDraftDatabase,
   syncNotionDrafts,
+  ungroupedNotionDraftKeys,
   type NotionDraftClient,
 } from '@/lib/notion-drafts';
 
@@ -335,6 +337,89 @@ describe('Notion draft completion gate', () => {
     expect(notionDraftCandidates(source, { mediaRoot: join(mediaRoot, 'other') })[0]).toMatchObject({
       imageStatus: 'Invalid Receipt',
       postReadiness: 'Needs Images',
+    });
+  });
+});
+
+describe('legacy Notion grouping discovery', () => {
+  test('builds grouping-only metadata for an existing cancelled draft key', () => {
+    const source = snapshot();
+    source.issues.push({
+      id: 'cancelled-root',
+      identifier: 'MOM-40',
+      title: 'More content',
+      status: 'cancelled',
+      assigneeAgentId: 'writer-1',
+      parentId: null,
+      createdAt: '2026-08-17T16:17:54.504Z',
+    });
+    source.documents['cancelled-root'] = [
+      {
+        key: 'draft',
+        title: null,
+        format: 'markdown',
+        body: '# A durable reader-facing title\n\nLegacy article body.',
+        latestRevisionNumber: 3,
+      },
+    ];
+
+    const groups = notionDraftGroupingCandidates(source, [
+      'company-momo:cancelled-root:draft',
+      'company-momo:missing-root:draft',
+    ]);
+
+    expect(groups).toEqual([
+      expect.objectContaining({
+        issueIdentifier: 'MOM-40',
+        articleGroup: 'MOM-40 — A durable reader-facing title',
+        paperclipKey: 'company-momo:cancelled-root:draft',
+        createdAt: '2026-08-17T16:17:54.504Z',
+      }),
+    ]);
+    expect(notionDraftCandidates(source).some((draft) => draft.issueIdentifier === 'MOM-40')).toBe(false);
+  });
+
+  test('discovers only machine keys from rows whose Article Group is empty', async () => {
+    const notion = {
+      dataSources: {
+        retrieve: vi.fn(async () => ({
+          object: 'data_source',
+          id: 'source-1',
+          properties: notionDraftDatabaseSchema(),
+        })),
+        query: vi.fn(async () => ({
+          results: [
+            {
+              object: 'page',
+              id: 'legacy-1',
+              properties: {
+                'Paperclip Key': {
+                  rich_text: [{ plain_text: 'company-momo:cancelled-root:draft' }],
+                },
+              },
+            },
+            {
+              object: 'page',
+              id: 'manual-row',
+              properties: { 'Paperclip Key': { rich_text: [] } },
+            },
+          ],
+          has_more: false,
+          next_cursor: null,
+        })),
+      },
+      pages: { create: vi.fn(), update: vi.fn() },
+      fileUploads: { create: vi.fn(), send: vi.fn() },
+    } as unknown as NotionDraftClient;
+
+    await expect(ungroupedNotionDraftKeys(notion, 'source-1')).resolves.toEqual([
+      'company-momo:cancelled-root:draft',
+    ]);
+    expect(notion.dataSources.query).toHaveBeenCalledWith({
+      data_source_id: 'source-1',
+      filter: { property: 'Article Group', select: { is_empty: true } },
+      page_size: 100,
+      start_cursor: undefined,
     });
   });
 });
@@ -722,5 +807,55 @@ describe('Notion draft database setup and idempotent revision sync', () => {
     expect(payload).not.toHaveProperty('Review Status');
     expect(payload).not.toHaveProperty('Current');
     expect(payload).not.toHaveProperty('Name');
+  });
+
+  test('reconciles every existing grouping-only row without creating or reactivating work', async () => {
+    const grouping = notionDraftCandidates(snapshot())[0];
+    const update = vi.fn(async (_input: unknown) => ({ object: 'page', id: 'legacy-page' }));
+    const notion = {
+      dataSources: {
+        retrieve: vi.fn(async () => ({
+          object: 'data_source',
+          id: 'source-1',
+          properties: notionDraftDatabaseSchema(),
+        })),
+        query: vi.fn(async () => ({
+          results: [
+            {
+              object: 'page',
+              id: 'legacy-current',
+              properties: { Current: { checkbox: true }, 'Grouping Checksum': { rich_text: [] } },
+            },
+            {
+              object: 'page',
+              id: 'legacy-history',
+              properties: { Current: { checkbox: false }, 'Grouping Checksum': { rich_text: [] } },
+            },
+          ],
+          has_more: false,
+          next_cursor: null,
+        })),
+      },
+      pages: { create: vi.fn(), update },
+      fileUploads: { create: vi.fn(), send: vi.fn() },
+    } as unknown as NotionDraftClient;
+
+    const result = await syncNotionDrafts(
+      notion,
+      'source-1',
+      [],
+      '2026-08-19T23:00:00.000Z',
+      [grouping],
+    );
+
+    expect(result).toMatchObject({ ok: true, candidates: 0, grouped: 2, created: 0, updated: 0 });
+    expect(notion.pages.create).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledTimes(2);
+    for (const [request] of update.mock.calls) {
+      const properties = (request as { properties: Record<string, unknown> }).properties;
+      expect(properties).not.toHaveProperty('Current');
+      expect(properties).not.toHaveProperty('Review Status');
+      expect(properties).not.toHaveProperty('Name');
+    }
   });
 });

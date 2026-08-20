@@ -187,6 +187,26 @@ describe('Paperclip company portfolio', () => {
     );
   });
 
+  test('prioritizes an exact legacy issue id even when its status is outside the normal document set', async () => {
+    const fetchMock = paperclipFetch();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getPaperclipSnapshot('company-b', {
+      documentStatuses: ['in_review'],
+      additionalDocumentIssueIds: ['issue-b1'],
+      prioritizeDocumentStatuses: ['in_review'],
+      topLevelOnly: true,
+      documentLimit: 1,
+    });
+
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/issues/issue-b1/documents'))).toBe(
+      true,
+    );
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/issues/issue-b4/documents'))).toBe(
+      false,
+    );
+  });
+
   test('new work is created in the selected company, not whichever company is in env', async () => {
     const fetchMock = paperclipFetch();
     vi.stubGlobal('fetch', fetchMock);

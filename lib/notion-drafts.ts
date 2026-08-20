@@ -2,7 +2,12 @@ import { createHash } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { basename, extname, resolve, sep } from 'node:path';
 import type { Client } from '@notionhq/client';
-import { isFounderReviewIssue, type PaperclipSnapshot } from '@/lib/paperclip-live';
+import {
+  isFounderReviewIssue,
+  type PaperclipDocument,
+  type PaperclipIssue,
+  type PaperclipSnapshot,
+} from '@/lib/paperclip-live';
 
 export type NotionDraftClient = Pick<Client, 'databases' | 'dataSources' | 'pages' | 'fileUploads'>;
 
@@ -60,6 +65,23 @@ export type NotionDraftCandidate = {
   metadataChecksum: string;
   checksum: string;
 };
+
+export type NotionDraftGroupingCandidate = Pick<
+  NotionDraftCandidate,
+  | 'companyId'
+  | 'companyName'
+  | 'issueId'
+  | 'issueIdentifier'
+  | 'issueTitle'
+  | 'blogTitle'
+  | 'articleGroup'
+  | 'paperclipKey'
+  | 'paperclipUrl'
+  | 'assignedEmployee'
+  | 'ownerMissing'
+  | 'createdAt'
+  | 'groupingChecksum'
+>;
 
 export type NotionDraftSyncResult = {
   ok: boolean;
@@ -285,6 +307,71 @@ function readiness(
   };
 }
 
+function groupingCandidate(
+  snapshot: PaperclipSnapshot,
+  agents: Map<string, string>,
+  issue: PaperclipIssue,
+  document: PaperclipDocument,
+): NotionDraftGroupingCandidate {
+  const assignedEmployee = issue.assigneeAgentId
+    ? agents.get(issue.assigneeAgentId) ?? `UNKNOWN AGENT ${issue.assigneeAgentId}`
+    : 'UNASSIGNED IN PAPERCLIP';
+  const issueIdentifier = issue.identifier ?? issue.id;
+  const issueTitle = issue.title?.trim() || document.title?.trim() || 'Untitled draft';
+  const paperclipKey = `${snapshot.companyId}:${issue.id}:draft`;
+  const title = blogTitle(document.body, document.title, issueTitle);
+  const articleGroup = clip(`${issueIdentifier} — ${title}`, 100);
+  const paperclipUrl = `${snapshot.base}/api/issues/${encodeURIComponent(issue.id)}`;
+  const groupingChecksum = checksum([
+    articleGroup,
+    snapshot.companyName ?? snapshot.companyId,
+    issueIdentifier,
+    paperclipKey,
+    assignedEmployee,
+    String(!issue.assigneeAgentId),
+    issue.createdAt ?? '',
+    paperclipUrl,
+  ]);
+  return {
+    companyId: snapshot.companyId,
+    companyName: snapshot.companyName ?? snapshot.companyId,
+    issueId: issue.id,
+    issueIdentifier,
+    issueTitle,
+    blogTitle: title,
+    articleGroup,
+    paperclipKey,
+    paperclipUrl,
+    assignedEmployee,
+    ownerMissing: !issue.assigneeAgentId,
+    createdAt: issue.createdAt ?? null,
+    groupingChecksum,
+  };
+}
+
+/**
+ * Builds safe, cross-revision metadata only for Paperclip keys that already
+ * exist in Notion. Status is intentionally irrelevant here: cancelled source
+ * work may retain immutable review history, but this function cannot create a
+ * page, alter review state, or make that work current again.
+ */
+export function notionDraftGroupingCandidates(
+  snapshot: PaperclipSnapshot,
+  existingPaperclipKeys: Iterable<string>,
+): NotionDraftGroupingCandidate[] {
+  const requested = new Set(existingPaperclipKeys);
+  const agents = new Map(snapshot.agents.map((agent) => [agent.id, agent.name]));
+  return snapshot.issues.flatMap((issue) => {
+    if (issue.parentId) return [];
+    const paperclipKey = `${snapshot.companyId}:${issue.id}:draft`;
+    if (!requested.has(paperclipKey)) return [];
+    const document = (snapshot.documents[issue.id] ?? []).find(
+      (candidate) => candidate.key === 'draft' && candidate.body.trim().length > 0,
+    );
+    return document ? [groupingCandidate(snapshot, agents, issue, document)] : [];
+  });
+}
+
 /**
  * The machine-readable completion gate. Employees do not type a free-form
  * "send to Notion" tag: the canonical issue itself must be top-level,
@@ -305,13 +392,8 @@ export function notionDraftCandidates(
       (candidate) => candidate.key === 'draft' && candidate.body.trim().length > 0,
     );
     if (!document) return [];
-    const assignedEmployee = issue.assigneeAgentId
-      ? agents.get(issue.assigneeAgentId) ?? `UNKNOWN AGENT ${issue.assigneeAgentId}`
-      : 'UNASSIGNED IN PAPERCLIP';
-    const issueIdentifier = issue.identifier ?? issue.id;
-    const issueTitle = issue.title?.trim() || document.title?.trim() || 'Untitled draft';
+    const group = groupingCandidate(snapshot, agents, issue, document);
     const revision = document.latestRevisionNumber ?? 1;
-    const paperclipKey = `${snapshot.companyId}:${issue.id}:draft`;
     const markerCount = verifyMarkers(document.body);
     const source = sourceEvidence(
       document.body,
@@ -333,23 +415,11 @@ export function notionDraftCandidates(
       document.body,
     ]);
     const mediaChecksum = checksum(media.assets.map((asset) => `${asset.placement}:${asset.sha256}`));
-    const title = blogTitle(document.body, document.title, issueTitle);
-    const articleGroup = clip(`${issueIdentifier} — ${title}`, 100);
-    const groupingChecksum = checksum([
-      articleGroup,
-      snapshot.companyName ?? snapshot.companyId,
-      issueIdentifier,
-      paperclipKey,
-      assignedEmployee,
-      String(!issue.assigneeAgentId),
-      issue.createdAt ?? '',
-      `${snapshot.base}/api/issues/${encodeURIComponent(issue.id)}`,
-    ]);
     const metadataChecksum = checksum([
-      title,
-      groupingChecksum,
-      assignedEmployee,
-      String(!issue.assigneeAgentId),
+      group.blogTitle,
+      group.groupingChecksum,
+      group.assignedEmployee,
+      String(group.ownerMissing),
       sourceStatus,
       issue.createdAt ?? '',
       issue.updatedAt ?? '',
@@ -363,19 +433,8 @@ export function notionDraftCandidates(
     ]);
     return [
       {
-        companyId: snapshot.companyId,
-        companyName: snapshot.companyName ?? snapshot.companyId,
-        issueId: issue.id,
-        issueIdentifier,
-        issueTitle,
-        blogTitle: title,
-        articleGroup,
-        paperclipKey,
-        paperclipUrl: `${snapshot.base}/api/issues/${encodeURIComponent(issue.id)}`,
-        assignedEmployee,
-        ownerMissing: !issue.assigneeAgentId,
+        ...group,
         sourceStatus,
-        createdAt: issue.createdAt ?? null,
         sourceUpdated: issue.updatedAt ?? null,
         revision,
         format: document.format,
@@ -386,7 +445,6 @@ export function notionDraftCandidates(
         ...media,
         ...ready,
         mediaChecksum,
-        groupingChecksum,
         metadataChecksum,
         checksum: contentChecksum,
       },
@@ -654,6 +712,43 @@ async function validateSchema(
   return missing.map(([name, config]) => `${name} (${config.type})`);
 }
 
+/**
+ * Discovers only legacy rows that already exist in this Notion data source and
+ * still lack the machine-owned grouping field. The returned key is treated as
+ * a lookup hint only; callers must validate its company and issue id before
+ * asking Paperclip for source metadata.
+ */
+export async function ungroupedNotionDraftKeys(
+  notion: NotionDraftClient,
+  dataSourceId: string,
+): Promise<string[]> {
+  const missing = await validateSchema(notion, dataSourceId);
+  if (missing.length > 0) {
+    throw new Error(`Notion data source is missing required properties: ${missing.join(', ')}`);
+  }
+  const keys = new Set<string>();
+  let startCursor: string | undefined;
+  do {
+    const response = await notion.dataSources.query({
+      data_source_id: dataSourceId,
+      filter: { property: 'Article Group', select: { is_empty: true } },
+      page_size: 100,
+      start_cursor: startCursor,
+    });
+    for (const page of response.results) {
+      if (!fullPage(page)) continue;
+      const properties = (page as unknown as { properties: Record<string, unknown> }).properties;
+      const key = richTextValue(properties['Paperclip Key']).trim();
+      if (key) keys.add(key);
+      if (keys.size > 500) {
+        throw new Error('Notion contains more than 500 ungrouped draft keys; refusing an unbounded migration');
+      }
+    }
+    startCursor = response.has_more && response.next_cursor ? response.next_cursor : undefined;
+  } while (startCursor);
+  return [...keys];
+}
+
 async function uploadMedia(notion: NotionDraftClient, draft: NotionDraftCandidate): Promise<UploadedMedia> {
   const result: UploadedMedia = { hero: [], other: [] };
   for (const asset of draft.assets) {
@@ -703,7 +798,7 @@ function machineProperties(
  * Historical Notion pages receive only this subset: their original body,
  * review decision, revision state, and version-specific evidence stay intact.
  */
-function groupingProperties(draft: NotionDraftCandidate) {
+function groupingProperties(draft: NotionDraftGroupingCandidate) {
   return {
     'Article Group': { select: { name: draft.articleGroup } },
     Company: { select: { name: clip(draft.companyName, 100) } },
@@ -728,6 +823,7 @@ export async function syncNotionDrafts(
   dataSourceId: string,
   drafts: NotionDraftCandidate[],
   syncedAt = new Date().toISOString(),
+  groupingDrafts: NotionDraftGroupingCandidate[] = drafts,
 ): Promise<NotionDraftSyncResult> {
   const result: NotionDraftSyncResult = {
     ok: true,
@@ -750,9 +846,45 @@ export async function syncNotionDrafts(
     return result;
   }
 
-  for (const draft of drafts) {
+  const activeKeys = new Set(drafts.map((draft) => draft.paperclipKey));
+  const uniqueGroupingDrafts = [
+    ...new Map(groupingDrafts.map((draft) => [draft.paperclipKey, draft])).values(),
+  ];
+  const existingByKey = new Map<
+    string,
+    Array<{ id: string; properties: Record<string, unknown> }>
+  >();
+  for (const draft of uniqueGroupingDrafts) {
     try {
       const existing = await pagesForKey(notion, dataSourceId, draft.paperclipKey);
+      existingByKey.set(draft.paperclipKey, existing);
+      // Full candidates update their current page below. A grouping-only
+      // candidate is legacy by definition, so every matching page is safe to
+      // reconcile without changing Current, review state, body, or revision.
+      const pages = activeKeys.has(draft.paperclipKey)
+        ? existing.filter((page) => !checkboxValue(page.properties.Current))
+        : existing;
+      for (const page of pages) {
+        if (richTextValue(page.properties['Grouping Checksum']) === draft.groupingChecksum) continue;
+        await notion.pages.update({
+          page_id: page.id,
+          properties: groupingProperties(draft),
+        });
+        result.grouped += 1;
+      }
+    } catch (error) {
+      result.ok = false;
+      result.errors.push(
+        `${draft.issueIdentifier} grouping: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  for (const draft of drafts) {
+    try {
+      const existing =
+        existingByKey.get(draft.paperclipKey) ??
+        (await pagesForKey(notion, dataSourceId, draft.paperclipKey));
       // `done` is a reconciliation state for a page that already entered the
       // founder review library. Do not backfill every historical closed issue
       // into Notion when this richer schema is first deployed.
@@ -765,17 +897,6 @@ export async function syncNotionDrafts(
           richTextValue(page.properties.Checksum) === draft.checksum &&
           checkboxValue(page.properties.Current),
       );
-      // Backfill only safe cross-revision metadata on legacy/history pages.
-      // Today's QA, media and readiness state must not be projected backward
-      // onto an older immutable revision.
-      for (const page of existing.filter((candidate) => !checkboxValue(candidate.properties.Current))) {
-        if (richTextValue(page.properties['Grouping Checksum']) === draft.groupingChecksum) continue;
-        await notion.pages.update({
-          page_id: page.id,
-          properties: groupingProperties(draft),
-        });
-        result.grouped += 1;
-      }
       if (same) {
         const storedMetadata = richTextValue(same.properties['Metadata Checksum']);
         if (storedMetadata !== draft.metadataChecksum) {

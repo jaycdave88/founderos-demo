@@ -4,10 +4,13 @@ import { NextResponse } from 'next/server';
 import { runtimeEnv } from '@/lib/creds';
 import {
   notionDraftCandidates,
+  notionDraftGroupingCandidates,
   setupNotionDraftDatabase,
   syncNotionDrafts,
+  ungroupedNotionDraftKeys,
   type NotionDraftCandidate,
   type NotionDraftClient,
+  type NotionDraftGroupingCandidate,
 } from '@/lib/notion-drafts';
 import { getPaperclipSnapshot } from '@/lib/paperclip-live';
 
@@ -34,6 +37,11 @@ function authorized(request: Request, expected: string | undefined): boolean {
 
 function notionClient(env: Record<string, string | undefined>): NotionDraftClient | null {
   return env.NOTION_API_KEY ? new Client({ auth: env.NOTION_API_KEY }) : null;
+}
+
+function parsePaperclipDraftKey(value: string): { companyId: string; issueId: string } | null {
+  const match = /^([A-Za-z0-9_-]{1,128}):([A-Za-z0-9_-]{1,128}):draft$/.exec(value);
+  return match ? { companyId: match[1], issueId: match[2] } : null;
 }
 
 export async function GET() {
@@ -139,14 +147,40 @@ export async function POST(request: Request) {
   syncRunning = true;
   try {
     const drafts: NotionDraftCandidate[] = [];
+    const groupingDrafts: NotionDraftGroupingCandidate[] = [];
     const sourceErrors: string[] = [];
-    const companies: Array<{ companyId: string; companyName: string | null; candidates: number }> = [];
+    const companies: Array<{
+      companyId: string;
+      companyName: string | null;
+      candidates: number;
+      groupingCandidates: number;
+    }> = [];
+    let ungroupedKeys: string[];
+    try {
+      ungroupedKeys = await ungroupedNotionDraftKeys(notion, dataSourceId);
+    } catch (error) {
+      return NextResponse.json(
+        {
+          ok: false,
+          detail: `Could not discover legacy Notion rows: ${error instanceof Error ? error.message : String(error)}`,
+        },
+        { status: 502 },
+      );
+    }
     for (const companyId of allowedCompanies) {
+      const groupingKeys = ungroupedKeys.filter(
+        (key) => parsePaperclipDraftKey(key)?.companyId === companyId,
+      );
+      const additionalDocumentIssueIds = groupingKeys.flatMap((key) => {
+        const parsed = parsePaperclipDraftKey(key);
+        return parsed ? [parsed.issueId] : [];
+      });
       const snapshot = await getPaperclipSnapshot(companyId, {
         // Keep approved rows current after the founder closes Paperclip. A
         // `done` issue may update an existing review page to Ready to Post;
         // cancelled and in-flight work remain excluded.
         documentStatuses: ['in_review', 'done'],
+        additionalDocumentIssueIds,
         prioritizeDocumentStatuses: ['in_review'],
         topLevelOnly: true,
         documentLimit: 200,
@@ -159,14 +193,23 @@ export async function POST(request: Request) {
         continue;
       }
       const selected = notionDraftCandidates(snapshot, { mediaRoot: env.MEDIA_ROOT });
+      const selectedGrouping = notionDraftGroupingCandidates(snapshot, groupingKeys);
       drafts.push(...selected);
+      groupingDrafts.push(...selectedGrouping);
       companies.push({
         companyId,
         companyName: snapshot.companyName,
         candidates: selected.length,
+        groupingCandidates: selectedGrouping.length,
       });
     }
-    const result = await syncNotionDrafts(notion, dataSourceId, drafts);
+    const result = await syncNotionDrafts(
+      notion,
+      dataSourceId,
+      drafts,
+      undefined,
+      [...drafts, ...groupingDrafts],
+    );
     result.errors.unshift(...sourceErrors);
     result.ok = result.ok && sourceErrors.length === 0;
     return NextResponse.json(

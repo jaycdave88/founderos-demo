@@ -7,11 +7,14 @@ const mocks = vi.hoisted(() => ({
     url: 'https://www.notion.so/database-1',
   })),
   candidates: vi.fn(() => [{ issueIdentifier: 'MOM-45' }]),
+  groupingCandidates: vi.fn(() => [{ issueIdentifier: 'MOM-40' }]),
+  ungroupedKeys: vi.fn(async () => ['company-momo:legacy-issue:draft']),
   sync: vi.fn(async () => ({
     ok: true,
     candidates: 1,
     created: 1,
     updated: 0,
+    grouped: 1,
     skipped: 0,
     superseded: 0,
     errors: [],
@@ -39,7 +42,9 @@ vi.mock('@notionhq/client', () => ({
 vi.mock('@/lib/notion-drafts', () => ({
   setupNotionDraftDatabase: mocks.setup,
   notionDraftCandidates: mocks.candidates,
+  notionDraftGroupingCandidates: mocks.groupingCandidates,
   syncNotionDrafts: mocks.sync,
+  ungroupedNotionDraftKeys: mocks.ungroupedKeys,
 }));
 
 vi.mock('@/lib/paperclip-live', () => ({ getPaperclipSnapshot: mocks.snapshot }));
@@ -120,6 +125,7 @@ describe('Notion draft worker route', () => {
     expect(mocks.snapshot).toHaveBeenCalledTimes(2);
     expect(mocks.snapshot).toHaveBeenCalledWith('company-momo', {
       documentStatuses: ['in_review', 'done'],
+      additionalDocumentIssueIds: ['legacy-issue'],
       prioritizeDocumentStatuses: ['in_review'],
       topLevelOnly: true,
       documentLimit: 200,
@@ -129,5 +135,15 @@ describe('Notion draft worker route', () => {
       mediaRoot: '/Users/momo/AI/media',
     });
     expect(mocks.snapshot).toHaveBeenCalledWith('company-faceless', expect.any(Object));
+    expect(mocks.groupingCandidates).toHaveBeenCalledWith(expect.any(Object), [
+      'company-momo:legacy-issue:draft',
+    ]);
+    expect(mocks.sync).toHaveBeenCalledWith(
+      mocks.notion,
+      'source-1',
+      expect.any(Array),
+      undefined,
+      expect.any(Array),
+    );
   });
 });

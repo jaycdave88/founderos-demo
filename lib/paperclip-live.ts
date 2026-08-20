@@ -380,6 +380,7 @@ export async function getPaperclipSnapshot(
   options: {
     includeDocuments?: boolean;
     documentStatuses?: string[];
+    additionalDocumentIssueIds?: string[];
     prioritizeDocumentStatuses?: string[];
     topLevelOnly?: boolean;
     documentLimit?: number;
@@ -431,18 +432,28 @@ export async function getPaperclipSnapshot(
   // issue, in parallel, capped — a company with hundreds of issues should not
   // turn one page load into hundreds of round trips.
   let documentIssues = issues;
+  const additionalDocumentIssueIds = new Set(options.additionalDocumentIssueIds ?? []);
   if (options.documentStatuses?.length) {
     const statuses = new Set(options.documentStatuses);
-    documentIssues = documentIssues.filter((issue) => statuses.has(issue.status ?? ''));
+    documentIssues = documentIssues.filter(
+      (issue) => statuses.has(issue.status ?? '') || additionalDocumentIssueIds.has(issue.id),
+    );
   }
   if (options.topLevelOnly) {
     documentIssues = documentIssues.filter((issue) => !issue.parentId);
   }
-  if (options.prioritizeDocumentStatuses?.length) {
+  if (additionalDocumentIssueIds.size > 0 || options.prioritizeDocumentStatuses?.length) {
     const priority = new Set(options.prioritizeDocumentStatuses);
     documentIssues = [
-      ...documentIssues.filter((issue) => priority.has(issue.status ?? '')),
-      ...documentIssues.filter((issue) => !priority.has(issue.status ?? '')),
+      // Existing ungrouped Notion rows are bounded and go first so a large
+      // current review queue cannot starve the one-time legacy repair.
+      ...documentIssues.filter((issue) => additionalDocumentIssueIds.has(issue.id)),
+      ...documentIssues.filter(
+        (issue) => !additionalDocumentIssueIds.has(issue.id) && priority.has(issue.status ?? ''),
+      ),
+      ...documentIssues.filter(
+        (issue) => !additionalDocumentIssueIds.has(issue.id) && !priority.has(issue.status ?? ''),
+      ),
     ];
   }
   const documentLimit = Math.max(0, Math.min(options.documentLimit ?? 40, 500));

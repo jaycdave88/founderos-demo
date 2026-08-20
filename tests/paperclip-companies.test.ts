@@ -80,6 +80,18 @@ function paperclipFetch() {
     if (path === '/api/issues/issue-b5/documents') return json([]);
     if (path === '/api/issues/issue-b6/documents') return json([]);
     if (path === '/api/issues/issue-b7/documents') return json([]);
+    if (path === '/api/issues/issue-b4') {
+      return json({
+        id: 'issue-b4',
+        companyId: 'company-b',
+        identifier: 'BET-4',
+        title: 'Hydrated review article',
+        status: 'in_review',
+        assigneeAgentId: null,
+        createdAt: '2026-08-17T14:00:00.000Z',
+        updatedAt: '2026-08-18T10:00:00.000Z',
+      });
+    }
     if (path === '/api/companies/company-b/issues' && init?.method === 'POST') return json({}, 201);
     return json({ error: `unexpected ${init?.method ?? 'GET'} ${path}` }, 404);
   });
@@ -153,6 +165,26 @@ describe('Paperclip company portfolio', () => {
       ]),
     );
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/company-a/'))).toBe(false);
+  });
+
+  test('can hydrate document candidates from authoritative issue records', async () => {
+    vi.stubGlobal('fetch', paperclipFetch());
+
+    const result = await getPaperclipSnapshot('company-b', {
+      documentStatuses: ['in_review'],
+      prioritizeDocumentStatuses: ['in_review'],
+      topLevelOnly: true,
+      documentLimit: 1,
+      hydrateDocumentIssues: true,
+    });
+
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        id: 'issue-b4',
+        identifier: 'BET-4',
+        createdAt: '2026-08-17T14:00:00.000Z',
+      }),
+    );
   });
 
   test('new work is created in the selected company, not whichever company is in env', async () => {

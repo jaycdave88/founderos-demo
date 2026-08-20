@@ -149,6 +149,7 @@ describe('Notion draft completion gate', () => {
       revision: 3,
       verifyMarkers: 1,
       blogTitle: 'Why AI broke the security model',
+      articleGroup: 'MOM-45 — Why AI broke the security model',
       createdAt: '2026-08-17T14:00:00.000Z',
       sourceVerification: 'Needs Verification',
       imageStatus: 'Missing Decision',
@@ -176,6 +177,7 @@ describe('Notion draft completion gate', () => {
     expect(markdown).toContain('[VERIFY: source the incident]');
     expect(properties).toMatchObject({
       Name: { title: [{ text: { content: 'Why AI broke the security model' } }] },
+      'Article Group': { select: { name: 'MOM-45 — Why AI broke the security model' } },
       'Review Status': { select: { name: 'Needs Review' } },
       Current: { checkbox: true },
       Company: { select: { name: 'Momo' } },
@@ -187,6 +189,20 @@ describe('Notion draft completion gate', () => {
       'Post Readiness': { select: { name: 'Needs Source Verification' } },
       'VERIFY Markers': { number: 1 },
       Revision: { number: 3 },
+    });
+  });
+
+  test('recovers a reader-facing title from the first H1 in a legacy draft', () => {
+    const source = snapshot();
+    source.documents['root-ready'][1] = {
+      ...source.documents['root-ready'][1],
+      title: null,
+      body: '# The operating model for an AI-native company\n\nA concrete opening.',
+    };
+
+    expect(notionDraftCandidates(source)[0]).toMatchObject({
+      blogTitle: 'The operating model for an AI-native company',
+      articleGroup: 'MOM-45 — The operating model for an AI-native company',
     });
   });
 
@@ -348,6 +364,7 @@ describe('Notion draft database setup and idempotent revision sync', () => {
     );
     expect(notionDraftDatabaseSchema()).toMatchObject({
       Name: { type: 'title' },
+      'Article Group': { type: 'select' },
       Created: { type: 'date' },
       'Source Verification': { type: 'select' },
       'Verified Sources': { type: 'number' },
@@ -579,13 +596,14 @@ describe('Notion draft database setup and idempotent revision sync', () => {
     expect(first).toMatchObject({ ok: true, created: 0, updated: 0, skipped: 1, superseded: 0 });
     expect(second).toMatchObject({ ok: true, created: 1, updated: 0, skipped: 0, superseded: 1 });
     expect(create.mock.invocationCallOrder[0]).toBeLessThan(update.mock.invocationCallOrder[0]);
-    expect(update).toHaveBeenCalledWith({
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
       page_id: 'old-page',
-      properties: {
+      properties: expect.objectContaining({
         Current: { checkbox: false },
         'Review Status': { select: { name: 'Superseded' } },
-      },
-    });
+        'Article Group': { select: { name: 'MOM-45 — Why AI broke the security model' } },
+      }),
+    }));
   });
 
   test('refreshes a corrected employee tag without replacing the page or its human review state', async () => {
@@ -647,5 +665,62 @@ describe('Notion draft database setup and idempotent revision sync', () => {
     const updatePayload = vi.mocked(notion.pages.update).mock.calls[0][0];
     expect(updatePayload.properties).not.toHaveProperty('Review Status');
     expect(updatePayload.properties).not.toHaveProperty('Checksum');
+  });
+
+  test('groups legacy historical revisions without rewriting their review state or body', async () => {
+    const draft = notionDraftCandidates(snapshot())[0];
+    const update = vi.fn(async (_input: unknown) => ({ object: 'page', id: 'legacy-history' }));
+    const notion = {
+      dataSources: {
+        retrieve: vi.fn(async () => ({
+          object: 'data_source',
+          id: 'source-1',
+          properties: notionDraftDatabaseSchema(),
+        })),
+        query: vi.fn(async () => ({
+          results: [
+            {
+              object: 'page',
+              id: 'current-page',
+              properties: {
+                Checksum: { rich_text: [{ plain_text: draft.checksum }] },
+                Current: { checkbox: true },
+                'Metadata Checksum': { rich_text: [{ plain_text: draft.metadataChecksum }] },
+                'Grouping Checksum': { rich_text: [{ plain_text: draft.groupingChecksum }] },
+              },
+            },
+            {
+              object: 'page',
+              id: 'legacy-history',
+              properties: {
+                Checksum: { rich_text: [{ plain_text: 'older-revision' }] },
+                Current: { checkbox: false },
+                'Review Status': { select: { name: 'Superseded' } },
+              },
+            },
+          ],
+          has_more: false,
+          next_cursor: null,
+        })),
+      },
+      pages: { create: vi.fn(), update },
+      fileUploads: { create: vi.fn(), send: vi.fn() },
+    } as unknown as NotionDraftClient;
+
+    const result = await syncNotionDrafts(notion, 'source-1', [draft]);
+
+    expect(result).toMatchObject({ ok: true, grouped: 1, created: 0, updated: 0, skipped: 1 });
+    expect(update).toHaveBeenCalledWith({
+      page_id: 'legacy-history',
+      properties: expect.objectContaining({
+        'Article Group': { select: { name: 'MOM-45 — Why AI broke the security model' } },
+        Created: { date: { start: '2026-08-17T14:00:00.000Z' } },
+        'Grouping Checksum': expect.any(Object),
+      }),
+    });
+    const payload = (update.mock.calls[0][0] as { properties: Record<string, unknown> }).properties;
+    expect(payload).not.toHaveProperty('Review Status');
+    expect(payload).not.toHaveProperty('Current');
+    expect(payload).not.toHaveProperty('Name');
   });
 });

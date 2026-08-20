@@ -150,6 +150,7 @@ export async function POST(request: Request) {
         prioritizeDocumentStatuses: ['in_review'],
         topLevelOnly: true,
         documentLimit: 200,
+        hydrateDocumentIssues: true,
       });
       if (!snapshot.ok) {
         sourceErrors.push(

@@ -111,8 +111,12 @@ issue is `in_review` and has a non-empty document keyed exactly `draft`.
 
 The database is optimized for a human reader. The article's labelled final
 title is the page name, while the Paperclip issue remains a separate traceable
-field. Rows show creation and sync dates, source verification and verified
-source count, image state, post readiness with the exact missing gate, company,
+field. Rows share an `Article Group` value (`issue identifier — final title`)
+so a grouped view keeps the current draft and its history together. Existing
+historical rows receive only invariant grouping, ownership, source-link, and
+creation metadata; their original review state and content remain untouched.
+Rows show creation and sync dates, source verification and verified source
+count, image state, post readiness with the exact missing gate, company,
 assigned employee, missing-owner warning, word/VERIFY counts, immutable
 revision/checksum, source link, and the complete Markdown draft. Changed drafts create a new current page and
 mark the prior page `Superseded`; retries with the same checksum do nothing.

@@ -35,6 +35,7 @@ export type NotionDraftCandidate = {
   issueIdentifier: string;
   issueTitle: string;
   blogTitle: string;
+  articleGroup: string;
   paperclipKey: string;
   paperclipUrl: string;
   assignedEmployee: string;
@@ -55,6 +56,7 @@ export type NotionDraftCandidate = {
   postReadiness: PostReadiness;
   readinessNotes: string;
   mediaChecksum: string;
+  groupingChecksum: string;
   metadataChecksum: string;
   checksum: string;
 };
@@ -64,6 +66,7 @@ export type NotionDraftSyncResult = {
   candidates: number;
   created: number;
   updated: number;
+  grouped: number;
   skipped: number;
   superseded: number;
   errors: string[];
@@ -107,6 +110,11 @@ function blogTitle(body: string, documentTitle: string | null, issueTitle: strin
   const finalArticle = body.match(/^##\s+Final article\s*$([\s\S]*)/imu)?.[1] ?? '';
   const articleHeading = finalArticle.match(/^#\s+(.+?)\s*$/mu)?.[1];
   if (articleHeading && cleanTitle(articleHeading)) return cleanTitle(articleHeading);
+  // Older drafts predate the labelled Final title contract but commonly open
+  // with the actual article H1. Prefer that reader-facing heading before the
+  // generic Paperclip task/document name so a migration can organize them.
+  const firstArticleHeading = body.match(/^#\s+(.+?)\s*$/mu)?.[1];
+  if (firstArticleHeading && cleanTitle(firstArticleHeading)) return cleanTitle(firstArticleHeading);
   if (documentTitle?.trim()) return cleanTitle(documentTitle);
   return cleanTitle(issueTitle) || 'Untitled draft';
 }
@@ -326,8 +334,20 @@ export function notionDraftCandidates(
     ]);
     const mediaChecksum = checksum(media.assets.map((asset) => `${asset.placement}:${asset.sha256}`));
     const title = blogTitle(document.body, document.title, issueTitle);
+    const articleGroup = clip(`${issueIdentifier} — ${title}`, 100);
+    const groupingChecksum = checksum([
+      articleGroup,
+      snapshot.companyName ?? snapshot.companyId,
+      issueIdentifier,
+      paperclipKey,
+      assignedEmployee,
+      String(!issue.assigneeAgentId),
+      issue.createdAt ?? '',
+      `${snapshot.base}/api/issues/${encodeURIComponent(issue.id)}`,
+    ]);
     const metadataChecksum = checksum([
       title,
+      groupingChecksum,
       assignedEmployee,
       String(!issue.assigneeAgentId),
       sourceStatus,
@@ -349,6 +369,7 @@ export function notionDraftCandidates(
         issueIdentifier,
         issueTitle,
         blogTitle: title,
+        articleGroup,
         paperclipKey,
         paperclipUrl: `${snapshot.base}/api/issues/${encodeURIComponent(issue.id)}`,
         assignedEmployee,
@@ -365,6 +386,7 @@ export function notionDraftCandidates(
         ...media,
         ...ready,
         mediaChecksum,
+        groupingChecksum,
         metadataChecksum,
         checksum: contentChecksum,
       },
@@ -375,6 +397,7 @@ export function notionDraftCandidates(
 export function notionDraftDatabaseSchema() {
   return {
     Name: { type: 'title' as const, title: {} },
+    'Article Group': { type: 'select' as const, select: { options: [] } },
     'Review Status': {
       type: 'select' as const,
       select: {
@@ -449,6 +472,7 @@ export function notionDraftDatabaseSchema() {
     Checksum: { type: 'rich_text' as const, rich_text: {} },
     'Media Checksum': { type: 'rich_text' as const, rich_text: {} },
     'Metadata Checksum': { type: 'rich_text' as const, rich_text: {} },
+    'Grouping Checksum': { type: 'rich_text' as const, rich_text: {} },
     'Paperclip URL': { type: 'url' as const, url: {} },
   };
 }
@@ -467,6 +491,7 @@ export function buildNotionDraftProperties(
     Name: {
       title: [{ type: 'text', text: { content: clip(draft.blogTitle) } }],
     },
+    'Article Group': { select: { name: draft.articleGroup } },
     'Review Status': { select: { name: draft.sourceStatus === 'done' ? 'Approved' : 'Needs Review' } },
     Current: { checkbox: true },
     Company: { select: { name: clip(draft.companyName, 100) } },
@@ -499,6 +524,7 @@ export function buildNotionDraftProperties(
     Checksum: { rich_text: [{ type: 'text', text: { content: draft.checksum } }] },
     'Media Checksum': { rich_text: [{ type: 'text', text: { content: draft.mediaChecksum } }] },
     'Metadata Checksum': { rich_text: [{ type: 'text', text: { content: draft.metadataChecksum } }] },
+    'Grouping Checksum': { rich_text: [{ type: 'text', text: { content: draft.groupingChecksum } }] },
     'Paperclip URL': { url: draft.paperclipUrl },
   };
   return properties;
@@ -673,6 +699,30 @@ function machineProperties(
   return properties;
 }
 
+/** Metadata that is invariant across revisions of one Paperclip article.
+ * Historical Notion pages receive only this subset: their original body,
+ * review decision, revision state, and version-specific evidence stay intact.
+ */
+function groupingProperties(draft: NotionDraftCandidate) {
+  return {
+    'Article Group': { select: { name: draft.articleGroup } },
+    Company: { select: { name: clip(draft.companyName, 100) } },
+    'Paperclip Issue': {
+      rich_text: [{ type: 'text' as const, text: { content: clip(draft.issueIdentifier) } }],
+    },
+    'Paperclip Key': {
+      rich_text: [{ type: 'text' as const, text: { content: clip(draft.paperclipKey) } }],
+    },
+    'Assigned Employee': { select: { name: clip(draft.assignedEmployee, 100) } },
+    'Owner Missing': { checkbox: draft.ownerMissing },
+    Created: draft.createdAt ? { date: { start: draft.createdAt } } : { date: null },
+    'Paperclip URL': { url: draft.paperclipUrl },
+    'Grouping Checksum': {
+      rich_text: [{ type: 'text' as const, text: { content: draft.groupingChecksum } }],
+    },
+  };
+}
+
 export async function syncNotionDrafts(
   notion: NotionDraftClient,
   dataSourceId: string,
@@ -684,6 +734,7 @@ export async function syncNotionDrafts(
     candidates: drafts.length,
     created: 0,
     updated: 0,
+    grouped: 0,
     skipped: 0,
     superseded: 0,
     errors: [],
@@ -714,6 +765,17 @@ export async function syncNotionDrafts(
           richTextValue(page.properties.Checksum) === draft.checksum &&
           checkboxValue(page.properties.Current),
       );
+      // Backfill only safe cross-revision metadata on legacy/history pages.
+      // Today's QA, media and readiness state must not be projected backward
+      // onto an older immutable revision.
+      for (const page of existing.filter((candidate) => !checkboxValue(candidate.properties.Current))) {
+        if (richTextValue(page.properties['Grouping Checksum']) === draft.groupingChecksum) continue;
+        await notion.pages.update({
+          page_id: page.id,
+          properties: groupingProperties(draft),
+        });
+        result.grouped += 1;
+      }
       if (same) {
         const storedMetadata = richTextValue(same.properties['Metadata Checksum']);
         if (storedMetadata !== draft.metadataChecksum) {
@@ -749,6 +811,9 @@ export async function syncNotionDrafts(
         await notion.pages.update({
           page_id: page.id,
           properties: {
+            ...(richTextValue(page.properties['Grouping Checksum']) === draft.groupingChecksum
+              ? {}
+              : groupingProperties(draft)),
             Current: { checkbox: false },
             'Review Status': { select: { name: 'Superseded' } },
           },

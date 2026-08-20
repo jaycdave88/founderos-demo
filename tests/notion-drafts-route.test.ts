@@ -123,6 +123,7 @@ describe('Notion draft worker route', () => {
       prioritizeDocumentStatuses: ['in_review'],
       topLevelOnly: true,
       documentLimit: 200,
+      hydrateDocumentIssues: true,
     });
     expect(mocks.candidates).toHaveBeenCalledWith(expect.any(Object), {
       mediaRoot: '/Users/momo/AI/media',

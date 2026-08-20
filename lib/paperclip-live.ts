@@ -383,6 +383,7 @@ export async function getPaperclipSnapshot(
     prioritizeDocumentStatuses?: string[];
     topLevelOnly?: boolean;
     documentLimit?: number;
+    hydrateDocumentIssues?: boolean;
   } = {},
 ): Promise<PaperclipSnapshot> {
   const errors: string[] = [];
@@ -421,7 +422,7 @@ export async function getPaperclipSnapshot(
   const agents = asArray(agentsRaw)
     .map(toAgent)
     .filter((a): a is PaperclipAgent => a !== null);
-  const issues = asArray(issuesRaw)
+  let issues = asArray(issuesRaw)
     .map(toIssue)
     .filter((i): i is PaperclipIssue => i !== null);
 
@@ -445,7 +446,21 @@ export async function getPaperclipSnapshot(
     ];
   }
   const documentLimit = Math.max(0, Math.min(options.documentLimit ?? 40, 500));
-  const withDocs = options.includeDocuments === false ? [] : documentIssues.slice(0, documentLimit);
+  let withDocs = options.includeDocuments === false ? [] : documentIssues.slice(0, documentLimit);
+  if (options.hydrateDocumentIssues && withDocs.length > 0) {
+    // Compact issue rows may omit creation/source timestamps on older work.
+    // Hydrate only the bounded document candidates from the authoritative
+    // issue endpoint so Notion can backfill dates without multiplying every
+    // normal FounderOS board read into hundreds of requests.
+    const hydrated = await Promise.all(
+      withDocs.map(async (issue) => toIssue(await getJson(`/api/issues/${issue.id}`, []))),
+    );
+    const byId = new Map(
+      hydrated.filter((issue): issue is PaperclipIssue => issue !== null).map((issue) => [issue.id, issue]),
+    );
+    issues = issues.map((issue) => byId.get(issue.id) ?? issue);
+    withDocs = withDocs.map((issue) => byId.get(issue.id) ?? issue);
+  }
   const docLists = await Promise.all(
     withDocs.map(async (issue) => {
       const raw = await getJson(`/api/issues/${issue.id}/documents`, []);
